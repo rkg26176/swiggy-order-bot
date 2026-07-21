@@ -199,7 +199,7 @@ def handle_web_app_data(message):
     )
 
 
-# --- BOT THREAD RUNNER ---
+# --- BOT RUNNER THREAD ---
 def run_bot():
     setup_menu_button()
     try:
@@ -209,11 +209,12 @@ def run_bot():
     bot.infinity_polling(timeout=20, long_polling_timeout=10)
 
 
-if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+# Gunicorn ke import karte hi thread turant start ho jayega
+bot_thread = threading.Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
 
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+        
