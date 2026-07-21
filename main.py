@@ -26,7 +26,6 @@ def home():
 
 @app.route("/redirect_app")
 def redirect_app():
-    # JavaScript ke zariye direct clean redirect taaki Telegram parameters bypass ho jayein
     return f"""
     <html>
         <head>
@@ -36,7 +35,7 @@ def redirect_app():
             </script>
         </head>
         <body>
-            <p>Redirecting to Swiggy Bot...</p>
+            <p>Redirecting...</p>
         </body>
     </html>
     """
@@ -133,7 +132,7 @@ def show_dynamic_force_join(
         )
 
 
-def show_arena_button(chat_id, user_name):
+def show_arena_button(chat_id, user_name, app_url):
     text = (
         f"✅ **Verification Successful!**\n\n"
         f"Welcome **{user_name}**! Aapka access unlocked hai.\n\n"
@@ -146,12 +145,125 @@ def show_arena_button(chat_id, user_name):
     btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    # Render server par jo redirect route banaya hai, uska WebApp link denge
-    # Render URL ko automatically utha lega (e.g. https://your-app.onrender.com/redirect_app)
-    # Local ya Render domain dynamic handle karne ke liye hum render URL hardcode ya relative use karenge agar possible ho, ya render app domain dalenge.
-    # Yahan hum dynamic render domain use karenge ya direct website URL ka bridge banayenge.
-    pass
+    web_app_info = WebAppInfo(url=app_url)
+    btn_webapp = KeyboardButton(
+        text="🎯 Swiggy Order Bot", web_app=web_app_info
+    )
+    markup.row(btn_webapp)
+
+    bot.send_message(
+        chat_id, text, reply_markup=markup, parse_mode="Markdown"
+    )
 
 
-# Render ka app URL yahan automatic set hoga ya aap apni render service ka domain yahan daalein:
-# Jaise: "https://gbx-swiggy-bot.onrender.com/redirect_app"
+@bot.message_handler(commands=["start"])
+def start_command(message):
+    user_id = message.from_user.id
+    user_name = message.from_user.first_name
+
+    # Render server ka dynamic URL generate karna taaki Mini App direct khul sake
+    host_url = (
+        os.environ.get("RENDER_EXTERNAL_URL")
+        or f"http://{message.chat.id}:10000"
+    )
+    if "RENDER_EXTERNAL_URL" in os.environ:
+        webapp_target = f"{os.environ.get('RENDER_EXTERNAL_URL')}/redirect_app"
+    else:
+        webapp_target = TARGET_URL  # Fallback
+
+    status_map = get_user_status_map(user_id)
+    if all(status_map.values()):
+        show_arena_button(message.chat.id, user_name, webapp_target)
+    else:
+        show_dynamic_force_join(
+            message.chat.id, user_name, status_map, is_edit=False
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "verify_join")
+def handle_verification(call):
+    user_id = call.from_user.id
+    user_name = call.from_user.first_name
+
+    if "RENDER_EXTERNAL_URL" in os.environ:
+        webapp_target = f"{os.environ.get('RENDER_EXTERNAL_URL')}/redirect_app"
+    else:
+        webapp_target = TARGET_URL
+
+    status_map = get_user_status_map(user_id)
+
+    if all(status_map.values()):
+        bot.answer_callback_query(call.id, "🎉 Success! Unlocked.")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        show_arena_button(call.message.chat.id, user_name, webapp_target)
+    else:
+        bot.answer_callback_query(
+            call.id, "❌ Kripya saare channels join karein!", show_alert=True
+        )
+        show_dynamic_force_join(
+            call.message.chat.id,
+            user_name,
+            status_map,
+            call.message.message_id,
+            is_edit=True,
+        )
+
+
+@bot.message_handler(
+    func=lambda msg: msg.text in ["💰 Balance", "💬 Support"]
+)
+def handle_keyboard_buttons(message):
+    if message.text == "💰 Balance":
+        bot.send_message(
+            message.chat.id,
+            "💰 **Your Current Balance:** `₹0.00`",
+            parse_mode="Markdown",
+        )
+    elif message.text == "💬 Support":
+        markup = InlineKeyboardMarkup()
+        btn_support = InlineKeyboardButton(
+            text="💬 Contact Support Bot", url=SUPPORT_BOT_URL
+        )
+        markup.add(btn_support)
+
+        bot.send_message(
+            message.chat.id, "👇", reply_markup=markup, parse_mode="Markdown"
+        )
+
+
+@bot.message_handler(content_types=["web_app_data"])
+def handle_web_app_data(message):
+    raw_payload = message.web_app_data.data
+    bot.send_message(
+        message.chat.id,
+        f"🎉 **Order Received!**\n\n`{raw_payload}`",
+        parse_mode="Markdown",
+    )
+
+
+def run_bot():
+    reset_menu_button()
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Webhook warning: {e}")
+
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=1, timeout=20)
+        except Exception as e:
+            print(f"Polling Error: {e}")
+            time.sleep(3)
+
+
+bot_thread = threading.Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+    
