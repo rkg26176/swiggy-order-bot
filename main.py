@@ -10,18 +10,19 @@ from telebot.types import (
     WebAppInfo,
 )
 
-# --- FLASK SERVER FOR RENDER ---
+# --- FLASK SERVER ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-    return "GBX Swiggy Bot Server is Running Online!"
+    return "GBX Swiggy Bot Server Active!"
 
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
 WEB_APP_URL = "https://couponsmafia.shop/sw/?v=1784645347"
+SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
@@ -53,7 +54,7 @@ def setup_menu_button():
             type="web_app", text="Swiggy Order Bot", web_app=web_app_info
         )
         bot.set_chat_menu_button(menu_button=menu_button)
-        print("✅ 4-Dot Menu button set successfully!")
+        print("✅ Menu button configured via API!")
     except Exception as e:
         print(f"⚠️ Error setting menu button: {e}")
 
@@ -118,13 +119,29 @@ def show_dynamic_force_join(
         )
 
 
-# --- SUCCESS MESSAGE ---
+# --- SUCCESS MENU (BALANCE + SUPPORT + MINI WEB) ---
 def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
     text = (
         f"✅ **Verification Successful!**\n\n"
         f"Welcome **{user_name}**! Aapka access unlocked hai.\n\n"
-        f"👇 Niche **4-Dot Menu Icon** par click karke WebApp kholein."
+        f"Niche diye gaye options me se select karein:"
     )
+
+    markup = InlineKeyboardMarkup()
+
+    # Row 1: Balance (Callback) + Support (Url)
+    btn_balance = InlineKeyboardButton(
+        text="💰 Balance", callback_data="check_balance"
+    )
+    btn_support = InlineKeyboardButton(text="💬 Support", url=SUPPORT_BOT_URL)
+    markup.row(btn_balance, btn_support)
+
+    # Row 2: Mini WebApp Button
+    web_app_info = WebAppInfo(url=WEB_APP_URL)
+    btn_webapp = InlineKeyboardButton(
+        text="🎯 Swiggy Order Bot", web_app=web_app_info
+    )
+    markup.row(btn_webapp)
 
     if is_edit and message_id:
         try:
@@ -132,23 +149,20 @@ def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
                 text,
                 chat_id,
                 message_id,
-                reply_markup=None,
+                reply_markup=markup,
                 parse_mode="Markdown",
             )
         except Exception as e:
             print(f"⚠️ Edit error: {e}")
     else:
         bot.send_message(
-            chat_id, text, reply_markup=None, parse_mode="Markdown"
+            chat_id, text, reply_markup=markup, parse_mode="Markdown"
         )
 
 
 # --- COMMAND HANDLERS ---
 @bot.message_handler(commands=["start"])
 def start_command(message):
-    print(
-        f"📩 /start command received from {message.from_user.first_name} ({message.from_user.id})"
-    )
     user_id = message.from_user.id
     user_name = message.from_user.first_name
 
@@ -161,32 +175,41 @@ def start_command(message):
         )
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "verify_join")
-def handle_verification(call):
-    print(f"🔘 Verify button clicked by {call.from_user.first_name}")
+@bot.callback_query_handler(
+    func=lambda call: call.data in ["verify_join", "check_balance"]
+)
+def handle_callbacks(call):
     user_id = call.from_user.id
     user_name = call.from_user.first_name
 
-    status_map = get_user_status_map(user_id)
+    if call.data == "verify_join":
+        status_map = get_user_status_map(user_id)
 
-    if all(status_map.values()):
-        bot.answer_callback_query(call.id, "🎉 Success! Unlocked.")
-        show_arena_button(
-            call.message.chat.id,
-            user_name,
-            call.message.message_id,
-            is_edit=True,
-        )
-    else:
+        if all(status_map.values()):
+            bot.answer_callback_query(call.id, "🎉 Success! Unlocked.")
+            show_arena_button(
+                call.message.chat.id,
+                user_name,
+                call.message.message_id,
+                is_edit=True,
+            )
+        else:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Kripya saare channels join karein!",
+                show_alert=True,
+            )
+            show_dynamic_force_join(
+                call.message.chat.id,
+                user_name,
+                status_map,
+                call.message.message_id,
+                is_edit=True,
+            )
+
+    elif call.data == "check_balance":
         bot.answer_callback_query(
-            call.id, "❌ Kripya saare channels join karein!", show_alert=True
-        )
-        show_dynamic_force_join(
-            call.message.chat.id,
-            user_name,
-            status_map,
-            call.message.message_id,
-            is_edit=True,
+            call.id, "💰 Your Current Balance: ₹0.00", show_alert=True
         )
 
 
@@ -195,32 +218,27 @@ def handle_web_app_data(message):
     raw_payload = message.web_app_data.data
     bot.send_message(
         message.chat.id,
-        f"🎉 **Order / Action Received!**\n\n`{raw_payload}`",
+        f"🎉 **Order Received!**\n\n`{raw_payload}`",
         parse_mode="Markdown",
     )
 
 
-# --- BOT RUNNER WITH AUTOMATIC BACKGROUND THREAD ---
+# --- BOT RUNNER ---
 def run_bot():
-    print("🚀 Bot thread started...")
-    time.sleep(2)
     setup_menu_button()
-
     try:
         bot.remove_webhook()
-        print("✅ Webhook removed. Starting polling...")
     except Exception as e:
-        print(f"⚠️ Webhook warning: {e}")
+        print(f"Webhook warning: {e}")
 
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=20)
         except Exception as e:
-            print(f"❌ Polling Error encountered: {e}")
+            print(f"Polling Error: {e}")
             time.sleep(3)
 
 
-# Gunicorn / Render par import hote hi background thread chalu karne ke liye:
 bot_thread = threading.Thread(target=run_bot)
 bot_thread.daemon = True
 bot_thread.start()
@@ -228,4 +246,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                     
+    
