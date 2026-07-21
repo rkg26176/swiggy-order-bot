@@ -48,10 +48,9 @@ CHANNELS = {
 }
 
 
-# --- BLUE PILL BUTTON REMOVER (RESET TO DEFAULT) ---
+# --- BLUE PILL BUTTON REMOVER ---
 def reset_menu_button():
     try:
-        # Isse wo blue pill button permanent hat jayega
         bot.set_chat_menu_button(menu_button=MenuButtonDefault())
         print("✅ Blue Pill button removed permanently!")
     except Exception as e:
@@ -126,15 +125,12 @@ def show_arena_button(chat_id, user_name):
         f"👇 Niche **4-Dot Grid Button** par click karke saare options dekhein."
     )
 
-    # 4-Dot Grid Menu Keyboard (ReplyKeyboardMarkup)
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    # Row 1: Balance + Support
     btn_balance = KeyboardButton(text="💰 Balance")
     btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    # Row 2: Mini WebApp Button inside 4-Dot Grid
     web_app_info = WebAppInfo(url=WEB_APP_URL)
     btn_webapp = KeyboardButton(
         text="🎯 Swiggy Order Bot", web_app=web_app_info
@@ -200,9 +196,17 @@ def handle_keyboard_buttons(message):
             parse_mode="Markdown",
         )
     elif message.text == "💬 Support":
+        # Direct Inline Button format as requested
+        markup = InlineKeyboardMarkup()
+        btn_support_link = InlineKeyboardButton(
+            text="💬 Contact Support Bot", url=SUPPORT_BOT_URL
+        )
+        markup.add(btn_support_link)
+
         bot.send_message(
             message.chat.id,
-            f"💬 **Support Contact:**\n{SUPPORT_BOT_URL}",
+            "💬 **Support Contact:**",
+            reply_markup=markup,
             parse_mode="Markdown",
         )
 
@@ -240,4 +244,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-            
+    
