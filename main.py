@@ -200,7 +200,7 @@ def handle_web_app_data(message):
     )
 
 
-# --- BOT RUNNER WITH RESTART LOOP ---
+# --- BOT RUNNER WITH AUTOMATIC BACKGROUND THREAD ---
 def run_bot():
     print("🚀 Bot thread started...")
     time.sleep(2)
@@ -220,11 +220,12 @@ def run_bot():
             time.sleep(3)
 
 
-if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+# Gunicorn / Render par import hote hi background thread chalu karne ke liye:
+bot_thread = threading.Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
 
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+                     
