@@ -1,7 +1,7 @@
 import os
 import threading
 import time
-from flask import Flask
+from flask import Flask, render_template_string
 import telebot
 from telebot.types import (
     InlineKeyboardButton,
@@ -12,7 +12,15 @@ from telebot.types import (
     WebAppInfo,
 )
 
-# --- FLASK SERVER ---
+# --- CONFIGURATION ---
+BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
+
+# Main Target Link (Bina kisi double-encoding ke exact URL)
+EXACT_TARGET_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%252FApWXh%252BgQ8P4Mtr40k%252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%253D%253D"
+
+SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
+
+# --- FLASK SERVER & BRIDGE PAGE ---
 app = Flask(__name__)
 
 
@@ -21,12 +29,77 @@ def home():
     return "GBX Swiggy Bot Server Active!"
 
 
-# --- CONFIGURATION ---
-BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
+# Naya Bridge Page jo Telegram ke parameters ko filter kar dega
+@app.route("/open")
+def open_bridge():
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="hi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>GBX Swiggy Bot</title>
+        <style>
+            body {{
+                background-color: #121212;
+                color: #ffffff;
+                font-family: Arial, sans-serif;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                text-align: center;
+                padding: 20px;
+            }}
+            .card {{
+                background-color: #1e1e1e;
+                padding: 30px;
+                border-radius: 16px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+                max-width: 90%;
+                width: 320px;
+            }}
+            h2 {{
+                margin-bottom: 10px;
+                font-size: 20px;
+                color: #0088cc;
+            }}
+            p {{
+                font-size: 14px;
+                color: #aaa;
+                margin-bottom: 25px;
+            }}
+            .btn {{
+                display: inline-block;
+                width: 100%;
+                padding: 14px 0;
+                background-color: #0088cc;
+                color: #ffffff;
+                font-weight: bold;
+                font-size: 16px;
+                text-decoration: none;
+                border-radius: 10px;
+                transition: background 0.3s ease;
+                box-sizing: border-box;
+            }}
+            .btn:active {{
+                background-color: #006699;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>🎯 GBX Swiggy Order Bot</h2>
+            <p>Access Unlocked! Click below to proceed.</p>
+            <a href="{EXACT_TARGET_URL}" class="btn">🚀 Continue / Open Bot</a>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html_content)
 
-# Single-encoded URL (Bina double-percent ke) taaki Telegram WebApp 404 Not Found na de
-WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%2FApWXh%2BgQ8P4Mtr40k%2BzstUUF6FDSwCgjxDRRZhaebNbUL6w%3D%3D"
-SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
@@ -116,7 +189,7 @@ def show_dynamic_force_join(
         )
 
 
-def show_arena_button(chat_id, user_name):
+def show_arena_button(chat_id, user_name, bridge_url):
     text = (
         f"✅ **Verification Successful!**\n\n"
         f"Welcome **{user_name}**! Aapka access unlocked hai.\n\n"
@@ -129,8 +202,8 @@ def show_arena_button(chat_id, user_name):
     btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    # Pure 4-Dot Mini WebApp Button
-    web_app_info = WebAppInfo(url=WEB_APP_URL)
+    # Mini WebApp Button (Bridge Page URL ke sath)
+    web_app_info = WebAppInfo(url=bridge_url)
     btn_webapp = KeyboardButton(
         text="🎯 Swiggy Order Bot", web_app=web_app_info
     )
@@ -146,9 +219,16 @@ def start_command(message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name
 
+    # Render App Domain Auto-detect
+    render_domain = os.environ.get("RENDER_EXTERNAL_URL")
+    if render_domain:
+        bridge_url = f"{render_domain}/open"
+    else:
+        bridge_url = f"http://{message.chat.id}:10000/open"
+
     status_map = get_user_status_map(user_id)
     if all(status_map.values()):
-        show_arena_button(message.chat.id, user_name)
+        show_arena_button(message.chat.id, user_name, bridge_url)
     else:
         show_dynamic_force_join(
             message.chat.id, user_name, status_map, is_edit=False
@@ -160,6 +240,12 @@ def handle_verification(call):
     user_id = call.from_user.id
     user_name = call.from_user.first_name
 
+    render_domain = os.environ.get("RENDER_EXTERNAL_URL")
+    if render_domain:
+        bridge_url = f"{render_domain}/open"
+    else:
+        bridge_url = f"http://{call.message.chat.id}:10000/open"
+
     status_map = get_user_status_map(user_id)
 
     if all(status_map.values()):
@@ -168,7 +254,7 @@ def handle_verification(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
-        show_arena_button(call.message.chat.id, user_name)
+        show_arena_button(call.message.chat.id, user_name, bridge_url)
     else:
         bot.answer_callback_query(
             call.id, "❌ Kripya saare channels join karein!", show_alert=True
@@ -236,3 +322,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
