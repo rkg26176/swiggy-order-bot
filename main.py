@@ -44,15 +44,16 @@ CHANNELS = {
 }
 
 
-# --- 4-DOT MENU BUTTON SETUP ---
+# --- AUTOMATIC 4-DOT MENU BUTTON SETUP ---
 def setup_menu_button():
     try:
         web_app_info = WebAppInfo(url=WEB_APP_URL)
+        # Dynamic 4-dot menu button text change to Swiggy Order Bot
         menu_button = MenuButtonWebApp(
-            type="web_app", text="🎯 OPEN LOOT ARENA", web_app=web_app_info
+            type="web_app", text="Swiggy Order Bot", web_app=web_app_info
         )
         bot.set_chat_menu_button(menu_button=menu_button)
-        print("4-Dot Menu button set successfully!")
+        print("Menu button configured via API successfully!")
     except Exception as e:
         print(f"Error setting menu button: {e}")
 
@@ -117,17 +118,16 @@ def show_dynamic_force_join(
         )
 
 
-# --- SUCCESS MESSAGE (WITHOUT EXTRA INLINE BUTTON) ---
+# --- SUCCESS MESSAGE ---
 def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
     text = (
         f"✅ **Verification Successful!**\n\n"
         f"Welcome **{user_name}**! Aapka access unlocked hai.\n\n"
-        f"👇 Niche **4-Dot Grid Button (Menu Icon)** par click karke Mini WebApp kholein."
+        f"👇 Niche **4-Dot Menu Icon** par click karke WebApp kholein."
     )
 
     if is_edit and message_id:
         try:
-            # Inline button hata diya gaya hai taaki extra blue bar na bane
             bot.edit_message_text(
                 text,
                 chat_id,
@@ -211,4 +211,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                
+    
