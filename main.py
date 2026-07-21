@@ -9,7 +9,6 @@ from telebot.types import (
     KeyboardButton,
     MenuButtonDefault,
     ReplyKeyboardMarkup,
-    WebAppInfo,
 )
 
 # --- FLASK SERVER ---
@@ -23,9 +22,9 @@ def home():
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
-# URL ko raw string ya properly format karke rakha gaya hai
-WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%2FApWXh%2BgQ8P4Mtr40k%2BzstUUF6FDSwCgjxDRRZhaebNbUL6w%3D%3D"
-SUPPORT_BOT_URL = "https://t.me/b_support_bot"
+# Direct Website URL jise aap browser me paste karte hain
+WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%252FApWXh%252BgQ8P4Mtr40k%252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%253D%253D"
+SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
@@ -127,10 +126,8 @@ def show_arena_button(chat_id, user_name):
     btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    web_app_info = WebAppInfo(url=WEB_APP_URL)
-    btn_webapp = KeyboardButton(
-        text="🎯 Swiggy Order Bot", web_app=web_app_info
-    )
+    # 4-Dot Menu ke andar URL button (Direct link open karega bina kisi tg data ke)
+    btn_webapp = KeyboardButton(text="🎯 Swiggy Order Bot")
     markup.row(btn_webapp)
 
     bot.send_message(
@@ -180,7 +177,7 @@ def handle_verification(call):
 
 
 @bot.message_handler(
-    func=lambda msg: msg.text in ["💰 Balance", "💬 Support"]
+    func=lambda msg: msg.text in ["💰 Balance", "💬 Support", "🎯 Swiggy Order Bot"]
 )
 def handle_keyboard_buttons(message):
     if message.text == "💰 Balance":
@@ -195,9 +192,21 @@ def handle_keyboard_buttons(message):
             text="💬 Contact Support Bot", url=SUPPORT_BOT_URL
         )
         markup.add(btn_support)
-
         bot.send_message(
             message.chat.id, "👇", reply_markup=markup, parse_mode="Markdown"
+        )
+    elif message.text == "🎯 Swiggy Order Bot":
+        # Jaise hi user click karega, direct website ka link button ke sath mil jayega jo bina error ke open hoga
+        markup = InlineKeyboardMarkup()
+        btn_open = InlineKeyboardButton(
+            text="🌐 Click Here to Open Swiggy Bot", url=WEB_APP_URL
+        )
+        markup.add(btn_open)
+        bot.send_message(
+            message.chat.id,
+            "👇 **Apna link yahan se direct kholein:**",
+            reply_markup=markup,
+            parse_mode="Markdown",
         )
 
 
@@ -233,4 +242,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-            
+    
