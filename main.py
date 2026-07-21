@@ -9,18 +9,17 @@ from telebot.types import (
     WebAppInfo,
 )
 
+# --- FLASK APP FOR RENDER KEEP-ALIVE ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-    return "Bot & WebApp Gateway Active!"
+    return "Bot Server Active!"
 
 
 # --- CONFIGURATION ---
-BOT_TOKEN = os.environ.get(
-    "BOT_TOKEN", "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
-)
+BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
 WEB_APP_URL = "https://couponsmafia.shop/sw/?v=1784645347"
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -45,7 +44,7 @@ CHANNELS = {
 }
 
 
-# Telegram Chat Menu Button (4-dot Icon) Setup
+# --- HELPER FUNCTIONS ---
 def setup_menu_button():
     try:
         web_app_info = WebAppInfo(url=WEB_APP_URL)
@@ -58,7 +57,6 @@ def setup_menu_button():
         print(f"Error setting menu button: {e}")
 
 
-# Verification Status Checker
 def get_user_status_map(user_id):
     status_map = {}
     for channel_id in CHANNELS:
@@ -76,13 +74,12 @@ def get_user_status_map(user_id):
     return status_map
 
 
-# Dynamic Force Join Menu
 def show_dynamic_force_join(
     chat_id, user_name, status_map, message_id=None, is_edit=False
 ):
     text = (
         f"❌ **Access Denied, {user_name}!**\n\n"
-        "Aapne humare required channels/GC ko leave kar diya hai ya join nahi kiya hai.\n"
+        "Aapne humare required channels/GC ko join nahi kiya hai ya leave kar diya hai.\n"
         "Kripya niche diye gaye channels join karein:"
     )
 
@@ -133,15 +130,23 @@ def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
     )
 
     if is_edit and message_id:
-        bot.edit_message_text(
-            text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown"
-        )
+        try:
+            bot.edit_message_text(
+                text,
+                chat_id,
+                message_id,
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            print(f"Edit error: {e}")
     else:
         bot.send_message(
             chat_id, text, reply_markup=markup, parse_mode="Markdown"
         )
 
 
+# --- COMMAND HANDLERS ---
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
@@ -154,21 +159,6 @@ def start_command(message):
         show_dynamic_force_join(
             message.chat.id, user_name, status_map, is_edit=False
         )
-
-
-# Har message par Live Check: Agar leave kiya toh block karega
-@bot.message_handler(func=lambda message: True)
-def auto_check_all_messages(message):
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name
-
-    status_map = get_user_status_map(user_id)
-    if not all(status_map.values()):
-        show_dynamic_force_join(
-            message.chat.id, user_name, status_map, is_edit=False
-        )
-    else:
-        show_arena_button(message.chat.id, user_name, is_edit=False)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "verify_join")
@@ -209,9 +199,14 @@ def handle_web_app_data(message):
     )
 
 
+# --- BOT THREAD RUNNER ---
 def run_bot():
     setup_menu_button()
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Webhook remove warning: {e}")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
 
 
 if __name__ == "__main__":
@@ -221,4 +216,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-        
+    
