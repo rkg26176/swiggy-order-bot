@@ -6,7 +6,7 @@ import telebot
 from telebot.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    MenuButtonWebApp,
+    MenuButtonDefault,
     WebAppInfo,
 )
 
@@ -46,17 +46,14 @@ CHANNELS = {
 }
 
 
-# --- 4-DOT MENU BUTTON SETUP ---
-def setup_menu_button():
+# --- RESET MENU BUTTON TO 4-DOT GRID ICON ---
+def reset_menu_button_to_grid():
     try:
-        web_app_info = WebAppInfo(url=WEB_APP_URL)
-        menu_button = MenuButtonWebApp(
-            type="web_app", text="Swiggy Order Bot", web_app=web_app_info
-        )
-        bot.set_chat_menu_button(menu_button=menu_button)
-        print("✅ Menu button configured via API!")
+        # Long blue button ko hata kar standard 4-dot icon restore karna
+        bot.set_chat_menu_button(menu_button=MenuButtonDefault(type="default"))
+        print("✅ Menu button reset to standard 4-dot grid icon!")
     except Exception as e:
-        print(f"⚠️ Error setting menu button: {e}")
+        print(f"⚠️ Error resetting menu button: {e}")
 
 
 # --- CHECK CHANNEL STATUS ---
@@ -136,7 +133,7 @@ def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
     btn_support = InlineKeyboardButton(text="💬 Support", url=SUPPORT_BOT_URL)
     markup.row(btn_balance, btn_support)
 
-    # Row 2: Mini WebApp Button
+    # Row 2: Mini WebApp Button (Swiggy Order Bot)
     web_app_info = WebAppInfo(url=WEB_APP_URL)
     btn_webapp = InlineKeyboardButton(
         text="🎯 Swiggy Order Bot", web_app=web_app_info
@@ -225,7 +222,7 @@ def handle_web_app_data(message):
 
 # --- BOT RUNNER ---
 def run_bot():
-    setup_menu_button()
+    reset_menu_button_to_grid()
     try:
         bot.remove_webhook()
     except Exception as e:
@@ -246,4 +243,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+        
