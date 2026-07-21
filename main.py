@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import urllib.parse
 from flask import Flask
 import telebot
 from telebot.types import (
@@ -23,8 +24,10 @@ def home():
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
-# URL ko safely encoded form me rakha gaya hai taaki Telegram parameters conflict na karein
-WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%252FApWXh%252BgQ8P4Mtr40k%252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%253D%253D"
+
+# Yahan accesscode ko double-encode kiya gaya hai taaki Telegram decoding ke baad bhi URL 100% safe rahe
+WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%25252FApWXh%25252BgQ8P4Mtr40k%25252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%25253D%25253D"
+
 SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
@@ -52,7 +55,7 @@ CHANNELS = {
 def reset_menu_button():
     try:
         bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-        print("✅ Blue Pill button removed permanently!")
+        print("✅ Menu button reset successfully!")
     except Exception as e:
         print(f"⚠️ Error resetting menu button: {e}")
 
@@ -128,7 +131,7 @@ def show_arena_button(chat_id, user_name):
     btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    # Mini WebApp Button (Jaise pehle tha)
+    # Mini WebApp Button
     web_app_info = WebAppInfo(url=WEB_APP_URL)
     btn_webapp = KeyboardButton(
         text="🎯 Swiggy Order Bot", web_app=web_app_info
@@ -235,4 +238,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                            
+    
