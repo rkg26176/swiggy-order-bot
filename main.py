@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from flask import Flask
 import telebot
 from telebot.types import (
@@ -9,20 +10,20 @@ from telebot.types import (
     WebAppInfo,
 )
 
-# --- FLASK SERVER ---
+# --- FLASK SERVER FOR RENDER ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-    return "Bot Server Active!"
+    return "GBX Swiggy Bot Server is Running Online!"
 
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
 WEB_APP_URL = "https://couponsmafia.shop/sw/?v=1784645347"
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
 CHANNELS = {
     "-1003332858806": {
@@ -44,18 +45,17 @@ CHANNELS = {
 }
 
 
-# --- AUTOMATIC 4-DOT MENU BUTTON SETUP ---
+# --- 4-DOT MENU BUTTON SETUP ---
 def setup_menu_button():
     try:
         web_app_info = WebAppInfo(url=WEB_APP_URL)
-        # Dynamic 4-dot menu button text change to Swiggy Order Bot
         menu_button = MenuButtonWebApp(
             type="web_app", text="Swiggy Order Bot", web_app=web_app_info
         )
         bot.set_chat_menu_button(menu_button=menu_button)
-        print("Menu button configured via API successfully!")
+        print("✅ 4-Dot Menu button set successfully!")
     except Exception as e:
-        print(f"Error setting menu button: {e}")
+        print(f"⚠️ Error setting menu button: {e}")
 
 
 # --- CHECK CHANNEL STATUS ---
@@ -71,7 +71,7 @@ def get_user_status_map(user_id):
             else:
                 status_map[channel_id] = True
         except Exception as e:
-            print(f"Error checking channel {channel_id}: {e}")
+            print(f"⚠️ Error checking channel {channel_id}: {e}")
             status_map[channel_id] = False
     return status_map
 
@@ -111,7 +111,7 @@ def show_dynamic_force_join(
                 parse_mode="Markdown",
             )
         except Exception as e:
-            print(f"Edit error: {e}")
+            print(f"⚠️ Edit error: {e}")
     else:
         bot.send_message(
             chat_id, text, reply_markup=markup, parse_mode="Markdown"
@@ -136,14 +136,19 @@ def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
                 parse_mode="Markdown",
             )
         except Exception as e:
-            print(f"Edit error: {e}")
+            print(f"⚠️ Edit error: {e}")
     else:
-        bot.send_message(chat_id, text, reply_markup=None, parse_mode="Markdown")
+        bot.send_message(
+            chat_id, text, reply_markup=None, parse_mode="Markdown"
+        )
 
 
-# --- HANDLERS ---
+# --- COMMAND HANDLERS ---
 @bot.message_handler(commands=["start"])
 def start_command(message):
+    print(
+        f"📩 /start command received from {message.from_user.first_name} ({message.from_user.id})"
+    )
     user_id = message.from_user.id
     user_name = message.from_user.first_name
 
@@ -158,6 +163,7 @@ def start_command(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "verify_join")
 def handle_verification(call):
+    print(f"🔘 Verify button clicked by {call.from_user.first_name}")
     user_id = call.from_user.id
     user_name = call.from_user.first_name
 
@@ -194,14 +200,24 @@ def handle_web_app_data(message):
     )
 
 
-# --- BOT RUNNER ---
+# --- BOT RUNNER WITH RESTART LOOP ---
 def run_bot():
+    print("🚀 Bot thread started...")
+    time.sleep(2)
     setup_menu_button()
+
     try:
         bot.remove_webhook()
+        print("✅ Webhook removed. Starting polling...")
     except Exception as e:
-        print(f"Webhook remove warning: {e}")
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+        print(f"⚠️ Webhook warning: {e}")
+
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=1, timeout=20)
+        except Exception as e:
+            print(f"❌ Polling Error encountered: {e}")
+            time.sleep(3)
 
 
 if __name__ == "__main__":
