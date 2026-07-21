@@ -196,16 +196,16 @@ def handle_keyboard_buttons(message):
             parse_mode="Markdown",
         )
     elif message.text == "💬 Support":
-        # Direct Inline Button format as requested
+        # Extra text "Support Contact:" hata diya hai, ab sirf clean button aayega
         markup = InlineKeyboardMarkup()
-        btn_support_link = InlineKeyboardButton(
+        btn_support = InlineKeyboardButton(
             text="💬 Contact Support Bot", url=SUPPORT_BOT_URL
         )
-        markup.add(btn_support_link)
+        markup.add(btn_support)
 
         bot.send_message(
             message.chat.id,
-            "💬 **Support Contact:**",
+            "👇",
             reply_markup=markup,
             parse_mode="Markdown",
         )
