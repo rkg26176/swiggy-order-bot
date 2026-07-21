@@ -23,7 +23,7 @@ def home():
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
-WEB_APP_URL = "https://couponsmafia.shop/sw/?v=1784645347"
+WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%252FApWXh%252BgQ8P4Mtr40k%252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%253D%253D"
 SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
@@ -196,7 +196,6 @@ def handle_keyboard_buttons(message):
             parse_mode="Markdown",
         )
     elif message.text == "💬 Support":
-        # Extra text "Support Contact:" hata diya hai, ab sirf clean button aayega
         markup = InlineKeyboardMarkup()
         btn_support = InlineKeyboardButton(
             text="💬 Contact Support Bot", url=SUPPORT_BOT_URL
