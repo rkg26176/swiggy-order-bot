@@ -6,7 +6,9 @@ import telebot
 from telebot.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     MenuButtonDefault,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 
@@ -46,12 +48,12 @@ CHANNELS = {
 }
 
 
-# --- RESET MENU BUTTON TO 4-DOT GRID ICON ---
-def reset_menu_button_to_grid():
+# --- BLUE PILL BUTTON REMOVER (RESET TO DEFAULT) ---
+def reset_menu_button():
     try:
-        # Long blue button ko hata kar standard 4-dot icon restore karna
-        bot.set_chat_menu_button(menu_button=MenuButtonDefault(type="default"))
-        print("✅ Menu button reset to standard 4-dot grid icon!")
+        # Isse wo blue pill button permanent hat jayega
+        bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        print("✅ Blue Pill button removed permanently!")
     except Exception as e:
         print(f"⚠️ Error resetting menu button: {e}")
 
@@ -74,7 +76,7 @@ def get_user_status_map(user_id):
     return status_map
 
 
-# --- DYNAMIC FORCE JOIN MENU ---
+# --- FORCE JOIN MENU ---
 def show_dynamic_force_join(
     chat_id, user_name, status_map, message_id=None, is_edit=False
 ):
@@ -116,45 +118,32 @@ def show_dynamic_force_join(
         )
 
 
-# --- SUCCESS MENU (BALANCE + SUPPORT + MINI WEB) ---
-def show_arena_button(chat_id, user_name, message_id=None, is_edit=False):
+# --- SUCCESS MENU (4-DOT GRID KEYBOARD) ---
+def show_arena_button(chat_id, user_name):
     text = (
         f"✅ **Verification Successful!**\n\n"
         f"Welcome **{user_name}**! Aapka access unlocked hai.\n\n"
-        f"Niche diye gaye options me se select karein:"
+        f"👇 Niche **4-Dot Grid Button** par click karke saare options dekhein."
     )
 
-    markup = InlineKeyboardMarkup()
+    # 4-Dot Grid Menu Keyboard (ReplyKeyboardMarkup)
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    # Row 1: Balance (Callback) + Support (Url)
-    btn_balance = InlineKeyboardButton(
-        text="💰 Balance", callback_data="check_balance"
-    )
-    btn_support = InlineKeyboardButton(text="💬 Support", url=SUPPORT_BOT_URL)
+    # Row 1: Balance + Support
+    btn_balance = KeyboardButton(text="💰 Balance")
+    btn_support = KeyboardButton(text="💬 Support")
     markup.row(btn_balance, btn_support)
 
-    # Row 2: Mini WebApp Button (Swiggy Order Bot)
+    # Row 2: Mini WebApp Button inside 4-Dot Grid
     web_app_info = WebAppInfo(url=WEB_APP_URL)
-    btn_webapp = InlineKeyboardButton(
+    btn_webapp = KeyboardButton(
         text="🎯 Swiggy Order Bot", web_app=web_app_info
     )
     markup.row(btn_webapp)
 
-    if is_edit and message_id:
-        try:
-            bot.edit_message_text(
-                text,
-                chat_id,
-                message_id,
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            print(f"⚠️ Edit error: {e}")
-    else:
-        bot.send_message(
-            chat_id, text, reply_markup=markup, parse_mode="Markdown"
-        )
+    bot.send_message(
+        chat_id, text, reply_markup=markup, parse_mode="Markdown"
+    )
 
 
 # --- COMMAND HANDLERS ---
@@ -165,48 +154,56 @@ def start_command(message):
 
     status_map = get_user_status_map(user_id)
     if all(status_map.values()):
-        show_arena_button(message.chat.id, user_name, is_edit=False)
+        show_arena_button(message.chat.id, user_name)
     else:
         show_dynamic_force_join(
             message.chat.id, user_name, status_map, is_edit=False
         )
 
 
-@bot.callback_query_handler(
-    func=lambda call: call.data in ["verify_join", "check_balance"]
-)
-def handle_callbacks(call):
+@bot.callback_query_handler(func=lambda call: call.data == "verify_join")
+def handle_verification(call):
     user_id = call.from_user.id
     user_name = call.from_user.first_name
 
-    if call.data == "verify_join":
-        status_map = get_user_status_map(user_id)
+    status_map = get_user_status_map(user_id)
 
-        if all(status_map.values()):
-            bot.answer_callback_query(call.id, "🎉 Success! Unlocked.")
-            show_arena_button(
-                call.message.chat.id,
-                user_name,
-                call.message.message_id,
-                is_edit=True,
-            )
-        else:
-            bot.answer_callback_query(
-                call.id,
-                "❌ Kripya saare channels join karein!",
-                show_alert=True,
-            )
-            show_dynamic_force_join(
-                call.message.chat.id,
-                user_name,
-                status_map,
-                call.message.message_id,
-                is_edit=True,
-            )
-
-    elif call.data == "check_balance":
+    if all(status_map.values()):
+        bot.answer_callback_query(call.id, "🎉 Success! Unlocked.")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        show_arena_button(call.message.chat.id, user_name)
+    else:
         bot.answer_callback_query(
-            call.id, "💰 Your Current Balance: ₹0.00", show_alert=True
+            call.id, "❌ Kripya saare channels join karein!", show_alert=True
+        )
+        show_dynamic_force_join(
+            call.message.chat.id,
+            user_name,
+            status_map,
+            call.message.message_id,
+            is_edit=True,
+        )
+
+
+# --- 4-DOT KEYBOARD TEXT HANDLERS ---
+@bot.message_handler(
+    func=lambda msg: msg.text in ["💰 Balance", "💬 Support"]
+)
+def handle_keyboard_buttons(message):
+    if message.text == "💰 Balance":
+        bot.send_message(
+            message.chat.id,
+            "💰 **Your Current Balance:** `₹0.00`",
+            parse_mode="Markdown",
+        )
+    elif message.text == "💬 Support":
+        bot.send_message(
+            message.chat.id,
+            f"💬 **Support Contact:**\n{SUPPORT_BOT_URL}",
+            parse_mode="Markdown",
         )
 
 
@@ -222,7 +219,7 @@ def handle_web_app_data(message):
 
 # --- BOT RUNNER ---
 def run_bot():
-    reset_menu_button_to_grid()
+    reset_menu_button()
     try:
         bot.remove_webhook()
     except Exception as e:
@@ -243,4 +240,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-        
+            
