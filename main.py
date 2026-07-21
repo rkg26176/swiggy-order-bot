@@ -23,8 +23,9 @@ def home():
 
 # --- CONFIGURATION ---
 BOT_TOKEN = "8813624728:AAHRdboNnxZiw6jgJR2OyiR1c5ezY2U6k_k"
-WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%252FApWXh%252BgQ8P4Mtr40k%252BzstUUF6FDSwCgjxDRRZhaebNbUL6w%253D%253D"
-SUPPORT_BOT_URL = "https://t.me/gbx_support_bot"
+# URL ko raw string ya properly format karke rakha gaya hai
+WEB_APP_URL = "https://couponsmafia.shop/sw/home.php?accesscode=A0a5No1EmrujrvMnUMQb0zQaLQw3d08WDThpgL%2FApWXh%2BgQ8P4Mtr40k%2BzstUUF6FDSwCgjxDRRZhaebNbUL6w%3D%3D"
+SUPPORT_BOT_URL = "https://t.me/b_support_bot"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
@@ -48,16 +49,13 @@ CHANNELS = {
 }
 
 
-# --- BLUE PILL BUTTON REMOVER ---
 def reset_menu_button():
     try:
         bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-        print("✅ Blue Pill button removed permanently!")
     except Exception as e:
         print(f"⚠️ Error resetting menu button: {e}")
 
 
-# --- CHECK CHANNEL STATUS ---
 def get_user_status_map(user_id):
     status_map = {}
     for channel_id in CHANNELS:
@@ -75,7 +73,6 @@ def get_user_status_map(user_id):
     return status_map
 
 
-# --- FORCE JOIN MENU ---
 def show_dynamic_force_join(
     chat_id, user_name, status_map, message_id=None, is_edit=False
 ):
@@ -117,7 +114,6 @@ def show_dynamic_force_join(
         )
 
 
-# --- SUCCESS MENU (4-DOT GRID KEYBOARD) ---
 def show_arena_button(chat_id, user_name):
     text = (
         f"✅ **Verification Successful!**\n\n"
@@ -142,7 +138,6 @@ def show_arena_button(chat_id, user_name):
     )
 
 
-# --- COMMAND HANDLERS ---
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
@@ -184,7 +179,6 @@ def handle_verification(call):
         )
 
 
-# --- 4-DOT KEYBOARD TEXT HANDLERS ---
 @bot.message_handler(
     func=lambda msg: msg.text in ["💰 Balance", "💬 Support"]
 )
@@ -203,10 +197,7 @@ def handle_keyboard_buttons(message):
         markup.add(btn_support)
 
         bot.send_message(
-            message.chat.id,
-            "👇",
-            reply_markup=markup,
-            parse_mode="Markdown",
+            message.chat.id, "👇", reply_markup=markup, parse_mode="Markdown"
         )
 
 
@@ -220,7 +211,6 @@ def handle_web_app_data(message):
     )
 
 
-# --- BOT RUNNER ---
 def run_bot():
     reset_menu_button()
     try:
@@ -243,4 +233,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+            
