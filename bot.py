@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import threading
+from flask import Flask
 import firebase_admin
 from firebase_admin import credentials, firestore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,6 +15,17 @@ logger = logging.getLogger(__name__)
 # Environment Variables & Admin ID
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
+
+# Initialize Flask for Render Port Binding
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def home():
+    return "Bot is running live!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port)
 
 # Initialize Firebase
 try:
@@ -382,15 +395,20 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
+    # Start Flask in a separate thread so Render port binding stays active
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot is running smoothly on Render...")
+    logger.info("Bot is running smoothly on Render with Flask server...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-    
+        
