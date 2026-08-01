@@ -10,7 +10,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment Variables & Admin ID (नया टोकन यहाँ सीधे सेट कर दिया है)
+# Environment Variables & Admin ID
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
@@ -393,4 +393,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
+    
