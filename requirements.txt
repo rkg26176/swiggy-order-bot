@@ -1,2 +1,5 @@
 pyTelegramBotAPI
 requests
+qrcode
+flask
+firebase-admin
