@@ -25,7 +25,7 @@ def home():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # Initialize Firebase
 try:
@@ -395,20 +395,21 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
-    # Start Flask in a separate thread so Render port binding stays active
+    # Run Flask server in background thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
+    # Run Telegram Bot in Main Thread
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot is running smoothly on Render with Flask server...")
+    logger.info("Bot is running smoothly on Render...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-        
+    
