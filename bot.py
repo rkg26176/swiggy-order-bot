@@ -6,7 +6,7 @@ from flask import Flask
 import firebase_admin
 from firebase_admin import credentials, firestore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, filters, CallbackContext
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -64,11 +64,11 @@ CHANNELS = {
     },
 }
 
-def check_force_join(update: Update, context: CallbackContext) -> bool:
+async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     for chat_id in CHANNELS.keys():
         try:
-            member = context.bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
+            member = await context.bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
             if member.status in ['left', 'kicked']:
                 return False
         except Exception as e:
@@ -92,13 +92,13 @@ def update_user_data(user_id, data):
     if db:
         db.collection("users").document(str(user_id)).set(data, merge=True)
 
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if db:
         db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
 
-    if not check_force_join(update, context):
+    if not await check_force_join(update, context):
         keyboard = []
         for chat_id, info in CHANNELS.items():
             keyboard.append([InlineKeyboardButton(info["name"], url=info["url"])])
@@ -106,9 +106,9 @@ def start(update: Update, context: CallbackContext):
         
         text = "❌ **Access Denied!**\nYou must join all the channels and group chat below to use this bot:"
         if update.callback_query:
-            update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         else:
-            update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
     user_data = get_user_data(user_id)
@@ -130,33 +130,33 @@ def start(update: Update, context: CallbackContext):
     )
 
     if update.callback_query:
-        update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     else:
-        update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-def button_handler(update: Update, context: CallbackContext):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     user_id = query.from_user.id
     data = query.data
 
     if data == "check_join":
-        if check_force_join(update, context):
-            start(update, context)
+        if await check_force_join(update, context):
+            await start(update, context)
         else:
-            query.answer("❌ You haven't joined all required chats yet!", show_alert=True)
+            await query.answer("❌ You haven't joined all required chats yet!", show_alert=True)
 
     elif data == "menu_balance":
         user_data = get_user_data(user_id)
         text = f"💰 **Wallet Overview**\n\nID Balance: ₹{user_data.get('id_balance', 0)}\nReferral Balance: ₹{user_data.get('ref_balance', 0)}"
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_add_balance":
         text = "➕ **Add Balance**\n\nSend the exact amount you want to add (e.g., `500`):"
         context.user_data['waiting_for_amount'] = True
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_add_account":
         text = (
@@ -165,7 +165,7 @@ def button_handler(update: Update, context: CallbackContext):
         )
         context.user_data['waiting_for_account_input'] = True
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_my_accounts":
         user_data = get_user_data(user_id)
@@ -179,37 +179,37 @@ def button_handler(update: Update, context: CallbackContext):
             for idx, acc in enumerate(accounts):
                 kb.append([InlineKeyboardButton(f"Account {idx+1}", callback_data=f"manage_acc_{idx}")])
             kb.append([InlineKeyboardButton("🔙 Back", callback_data="back_home")])
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_mini_web":
         kb = [
             [InlineKeyboardButton("🚀 Launch Mini Web", url="https://your-mini-web-app.com")],
             [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
         ]
-        query.message.edit_text("🌐 **Mini Web Dashboard**\n\nReal-time monitoring panel connected with your bot accounts:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text("🌐 **Mini Web Dashboard**\n\nReal-time monitoring panel connected with your bot accounts:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "admin_panel":
         if user_id != ADMIN_CHAT_ID:
-            query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
             return
         kb = [
             [InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast")],
             [InlineKeyboardButton("👥 User List", callback_data="admin_users_0")],
             [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
         ]
-        query.message.edit_text("⚙️ **Admin Control Panel**\n\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text("⚙️ **Admin Control Panel**\n\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "admin_broadcast":
         if user_id != ADMIN_CHAT_ID:
-            query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
             return
         context.user_data['waiting_for_broadcast'] = True
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
-        query.message.edit_text("📢 **Broadcast Mode**\n\nSend the message, text, sticker, or media you want to broadcast to all users:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text("📢 **Broadcast Mode**\n\nSend the message, text, sticker, or media you want to broadcast to all users:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("admin_users_"):
         if user_id != ADMIN_CHAT_ID:
-            query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
             return
         page = int(data.split("_")[-1])
         
@@ -240,10 +240,10 @@ def button_handler(update: Update, context: CallbackContext):
             kb.append(nav_buttons)
         kb.append([InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")])
 
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "back_home":
-        start(update, context)
+        await start(update, context)
 
     elif data.startswith("manage_acc_"):
         acc_idx = int(data.split("_")[-1])
@@ -251,7 +251,7 @@ def button_handler(update: Update, context: CallbackContext):
             [InlineKeyboardButton("📤 Export Auth JSON", callback_data=f"export_acc_{acc_idx}")],
             [InlineKeyboardButton("🔙 Back", callback_data="menu_my_accounts")]
         ]
-        query.message.edit_text(f"⚙️ **Manage Account #{acc_idx+1}**\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(f"⚙️ **Manage Account #{acc_idx+1}**\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("export_acc_"):
         acc_idx = int(data.split("_")[-1])
@@ -265,7 +265,7 @@ def button_handler(update: Update, context: CallbackContext):
         else:
             text = "❌ Account not found."
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="menu_my_accounts")]]
-        query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data.startswith("approve_"):
         req_id = data.split("_")[1]
@@ -279,9 +279,9 @@ def button_handler(update: Update, context: CallbackContext):
             target_data["id_balance"] = target_data.get("id_balance", 0) + amount
             update_user_data(target_user, target_data)
 
-            query.message.edit_text(f"✅ Approved! ₹{amount} added to User ID: {target_user}")
+            await query.message.edit_text(f"✅ Approved! ₹{amount} added to User ID: {target_user}")
             try:
-                context.bot.send_message(chat_id=target_user, text=f"🎉 Your payment of ₹{amount} has been approved by admin!")
+                await context.bot.send_message(chat_id=target_user, text=f"🎉 Your payment of ₹{amount} has been approved by admin!")
             except Exception:
                 pass
             db.collection("pending_utrs").document(req_id).delete()
@@ -292,14 +292,14 @@ def button_handler(update: Update, context: CallbackContext):
         if req_ref and req_ref.exists:
             req_data = req_ref.to_dict()
             target_user = req_data["user_id"]
-            query.message.edit_text(f"❌ Rejected payment request for User ID: {target_user}")
+            await query.message.edit_text(f"❌ Rejected payment request for User ID: {target_user}")
             try:
-                context.bot.send_message(chat_id=target_user, text="❌ Your payment request was rejected by admin.")
+                await context.bot.send_message(chat_id=target_user, text="❌ Your payment request was rejected by admin.")
             except Exception:
                 pass
             db.collection("pending_utrs").document(req_id).delete()
 
-def message_router(update: Update, context: CallbackContext):
+async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if db:
         db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
@@ -318,12 +318,12 @@ def message_router(update: Update, context: CallbackContext):
         fail_count = 0
         for uid in users_list:
             try:
-                update.message.copy(chat_id=uid)
+                await update.message.copy(chat_id=uid)
                 success_count += 1
             except Exception:
                 fail_count += 1
 
-        update.message.reply_text(f"📢 **Broadcast Completed!**\n\n✅ Success: {success_count}\n❌ Failed: {fail_count}")
+        await update.message.reply_text(f"📢 **Broadcast Completed!**\n\n✅ Success: {success_count}\n❌ Failed: {fail_count}")
         return
 
     if context.user_data.get('waiting_for_amount'):
@@ -335,13 +335,13 @@ def message_router(update: Update, context: CallbackContext):
             if db:
                 db.collection("pending_utrs").document(req_id).set({"user_id": user_id, "amount": amount})
 
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"🧾 **QR Code Generated for ₹{amount}**\n\n"
                 "Scan and pay, then send your **UTR / Transaction ID** here:"
             )
             context.user_data['waiting_for_utr'] = {"amount": amount, "req_id": req_id}
         except ValueError:
-            update.message.reply_text("❌ Please enter valid numbers only.")
+            await update.message.reply_text("❌ Please enter valid numbers only.")
         return
 
     if context.user_data.get('waiting_for_utr'):
@@ -354,13 +354,13 @@ def message_router(update: Update, context: CallbackContext):
             [InlineKeyboardButton("✅ Accept", callback_data=f"approve_{req_id}"),
              InlineKeyboardButton("❌ Reject", callback_data=f"reject_{req_id}")]
         ]
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"🔔 **New UTR Verification Request**\n\nUser ID: `{user_id}`\nAmount: ₹{amount}\nUTR: `{utr}`",
             reply_markup=InlineKeyboardMarkup(admin_keyboard),
             parse_mode="Markdown"
         )
-        update.message.reply_text("✅ UTR sent to admin for verification!")
+        await update.message.reply_text("✅ UTR sent to admin for verification!")
         return
 
     if context.user_data.get('waiting_for_account_input'):
@@ -374,9 +374,9 @@ def message_router(update: Update, context: CallbackContext):
         if user_input.startswith("{") and user_input.endswith("}"):
             user_data["accounts"].append({"json_data": user_input})
             update_user_data(user_id, user_data)
-            update.message.reply_text("✅ JSON Session Token detected, saved and linked successfully with Mini Web session!")
+            await update.message.reply_text("✅ JSON Session Token detected, saved and linked successfully with Mini Web session!")
         else:
-            update.message.reply_text(f"📱 Phone number `{user_input}` received. OTP request triggered. Please send your OTP code next:")
+            await update.message.reply_text(f"📱 Phone number `{user_input}` received. OTP request triggered. Please send your OTP code next:")
             context.user_data['waiting_for_otp'] = {"phone": user_input}
         return
 
@@ -391,7 +391,7 @@ def message_router(update: Update, context: CallbackContext):
         user_data["accounts"].append({"json_data": mock_session_string})
         update_user_data(user_id, user_data)
         
-        update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
+        await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
         return
 
 def main():
@@ -400,18 +400,16 @@ def main():
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Run Telegram Bot using Legacy Updater (Zero Threading Conflicts)
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    # Run Telegram Bot using Modern Application Builder with proper loop handling
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CallbackQueryHandler(button_handler))
-    dispatcher.add_handler(MessageHandler(filters.Filters.all & (~filters.Filters.command), message_router))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot is running smoothly with Legacy Updater on Render...")
-    updater.start_polling()
-    updater.idle()
+    logger.info("Bot is running smoothly on Render with modern application builder...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-        
+                      
