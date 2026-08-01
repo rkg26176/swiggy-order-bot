@@ -1,1 +1,1 @@
-web: gunicorn -w 1 main:app
+worker: python bot.py
