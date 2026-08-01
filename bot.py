@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-# Databases & State Storage (Mock / In-memory structures)
+# Databases & State Storage
 user_balances = {}   # {user_id: {"id_balance": 100.0, "ref_balance": 0.0}}
 user_accounts = {}   # {user_id: [{"json_data": "..."}]}
 pending_utrs = {}    # {req_id: {"user_id": user_id, "amount": amount}}
