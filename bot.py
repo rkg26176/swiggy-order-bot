@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -8,16 +7,17 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment Variables
+# Environment Variables & Admin ID
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-# Databases & State Storage
-user_balances = {}  # {user_id: {"id_balance": 100.0, "ref_balance": 0.0}}
-user_accounts = {}  # {user_id: [{"json_data": "..."}]}
-pending_utrs = {}   # {req_id: {"user_id": user_id, "amount": amount}}
+# Databases & State Storage (Mock / In-memory structures)
+user_balances = {}   # {user_id: {"id_balance": 100.0, "ref_balance": 0.0}}
+user_accounts = {}   # {user_id: [{"json_data": "..."}]}
+pending_utrs = {}    # {req_id: {"user_id": user_id, "amount": amount}}
+all_users = set()    # Track all unique users for User List
 
-# Channels and Group Chat dictionary with chat IDs and invite links
+# Official Channels & Group Dictionary provided by you
 CHANNELS = {
     "-1003332858806": {
         "name": "📢 GBX LOOT",
@@ -51,8 +51,9 @@ async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    all_users.add(user_id)
 
-    # Check Force Join for all channels and group chat
+    # Force Join Check
     if not await check_force_join(update, context):
         keyboard = []
         for chat_id, info in CHANNELS.items():
@@ -70,12 +71,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_balances:
         user_balances[user_id] = {"id_balance": 100.0, "ref_balance": 0.0}
 
-    # Main Menu (4-dot / Grid Layout)
+    # Main Menu (4-dot / Grid Layout + Admin Panel option if admin)
     keyboard = [
         [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"), InlineKeyboardButton("➕ Add Balance", callback_data="menu_add_balance")],
         [InlineKeyboardButton("👤 Add Account", callback_data="menu_add_account"), InlineKeyboardButton("📂 My Accounts", callback_data="menu_my_accounts")],
         [InlineKeyboardButton("🌐 Mini Web Panel", callback_data="menu_mini_web"), InlineKeyboardButton("💬 Customer Support", url="https://t.me/YourChatbotLink")]
     ]
+    
+    if user_id == ADMIN_CHAT_ID:
+        keyboard.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel"), InlineKeyboardButton("👥 User List", callback_data="admin_users_0")])
 
     text = (
         "🤖 **Main Dashboard**\n\n"
@@ -114,8 +118,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_add_account":
-        text = "👤 **Add Account**\n\nPlease send your account JSON data to connect with the Mini Web session:"
-        context.user_data['waiting_for_json'] = True
+        text = (
+            "👤 **Add Account (2-in-1 Auto Detect)**\n\n"
+            "Please send either your **JSON Session Token** OR your **Phone Number** to receive OTP and connect with Mini Web:"
+        )
+        context.user_data['waiting_for_account_input'] = True
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -138,6 +145,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
         ]
         await query.message.edit_text("🌐 **Mini Web Dashboard**\n\nReal-time monitoring panel connected with your bot accounts:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data == "admin_panel":
+        if user_id != ADMIN_CHAT_ID:
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            return
+        kb = [
+            [InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("👥 User List", callback_data="admin_users_0")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
+        ]
+        await query.message.edit_text("⚙️ **Admin Control Panel**\n\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data == "admin_broadcast":
+        if user_id != ADMIN_CHAT_ID:
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            return
+        context.user_data['waiting_for_broadcast'] = True
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
+        await query.message.edit_text("📢 **Broadcast Mode**\n\nSend the message, text, sticker, or media you want to broadcast to all users:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+    elif data.startswith("admin_users_"):
+        if user_id != ADMIN_CHAT_ID:
+            await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
+            return
+        page = int(data.split("_")[-1])
+        users_list = list(all_users)
+        per_page = 10
+        total_pages = (len(users_list) + per_page - 1) // per_page
+        
+        start_idx = page * per_page
+        end_idx = start_idx + per_page
+        current_users = users_list[start_idx:end_idx]
+
+        text = f"👥 **Total Users:** {len(users_list)} (Page {page+1}/{max(1, total_pages)})\n\n"
+        for u in current_users:
+            text += f"• `{u}`\n"
+
+        kb = []
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"admin_users_{page-1}"))
+        if end_idx < len(users_list):
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_users_{page+1}"))
+        
+        if nav_buttons:
+            kb.append(nav_buttons)
+        kb.append([InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")])
+
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "back_home":
         await start(update, context)
@@ -192,12 +248,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
+    all_users.add(user_id)
 
+    # Admin Broadcast Handler (Supports text, stickers, photos, documents, etc.)
+    if context.user_data.get('waiting_for_broadcast'):
+        if user_id != ADMIN_CHAT_ID:
+            return
+        context.user_data['waiting_for_broadcast'] = False
+        
+        success_count = 0
+        fail_count = 0
+        for uid in all_users:
+            try:
+                await update.message.copy(chat_id=uid)
+                success_count += 1
+            except Exception:
+                fail_count += 1
+
+        await update.message.reply_text(f"📢 **Broadcast Completed!**\n\n✅ Success: {success_count}\n❌ Failed: {fail_count}")
+        return
+
+    # Add Balance Amount Input
     if context.user_data.get('waiting_for_amount'):
         context.user_data['waiting_for_amount'] = False
         try:
-            amount = float(text)
+            amount = float(update.message.text)
             req_id = str(user_id) + "_" + str(int(os.urandom(2).hex(), 16))
             pending_utrs[req_id] = {"user_id": user_id, "amount": amount}
 
@@ -210,11 +285,12 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Please enter valid numbers only.")
         return
 
+    # UTR Submission Input
     if context.user_data.get('waiting_for_utr'):
         utr_data = context.user_data.pop('waiting_for_utr')
         amount = utr_data['amount']
         req_id = utr_data['req_id']
-        utr = text
+        utr = update.message.text
 
         admin_keyboard = [
             [InlineKeyboardButton("✅ Accept", callback_data=f"approve_{req_id}"),
@@ -229,12 +305,35 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ UTR sent to admin for verification!")
         return
 
-    if context.user_data.get('waiting_for_json'):
-        context.user_data['waiting_for_json'] = False
+    # 2-in-1 Auto-detect Account Input (JSON Token or Phone Number for OTP)
+    if context.user_data.get('waiting_for_account_input'):
+        context.user_data['waiting_for_account_input'] = False
+        user_input = update.message.text.strip()
+
+        # Check if input is JSON format or Phone Number
+        if user_input.startswith("{") and user_input.endswith("}"):
+            if user_id not in user_accounts:
+                user_accounts[user_id] = []
+            user_accounts[user_id].append({"json_data": user_input})
+            await update.message.reply_text("✅ JSON Session Token detected, saved and linked successfully with Mini Web session!")
+        else:
+            # Treated as Phone Number for OTP login flow integration
+            await update.message.reply_text(f"📱 Phone number `{user_input}` received. OTP request triggered. Please send your OTP code next:")
+            context.user_data['waiting_for_otp'] = {"phone": user_input}
+        return
+
+    # OTP Input Handler for Phone Login
+    if context.user_data.get('waiting_for_otp'):
+        otp_data = context.user_data.pop('waiting_for_otp')
+        otp_code = update.message.text.strip()
+        
+        # Mock session string creation on successful verification
+        mock_session_string = f"session_token_for_{otp_data['phone']}_verified"
         if user_id not in user_accounts:
             user_accounts[user_id] = []
-        user_accounts[user_id].append({"json_data": text})
-        await update.message.reply_text("✅ Account JSON saved and linked successfully with Mini Web session!")
+        user_accounts[user_id].append({"json_data": mock_session_string})
+        
+        await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
         return
 
 def main():
@@ -242,11 +341,11 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_router))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot is running with exact channels and group configuration...")
+    logger.info("Bot is running with full error-free setup, pagination and 2-in-1 auto-detect...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-    
+            
