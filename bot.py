@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import threading
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,38 +15,6 @@ logger = logging.getLogger(__name__)
 # Environment Variables & Admin ID
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
-
-# Initialize Flask for Mini Web Panel
-app_flask = Flask(__name__)
-
-@app_flask.route('/')
-def mini_web_home():
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Swiggy Order Bot - Mini Web Panel</title>
-        <style>
-            body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 50px; }
-            .container { background: #1e1e1e; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-            h1 { color: #ff5722; }
-            p { color: #aaa; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🚀 Swiggy Order Bot Mini Web</h1>
-            <p>Real-time connected dashboard is active and running successfully!</p>
-        </div>
-    </body>
-    </html>
-    """)
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # Initialize Firebase
 try:
@@ -64,6 +32,83 @@ try:
 except Exception as e:
     logger.error(f"Firebase initialization failed: {e}")
     db = None
+
+# Initialize Flask for Mini Web Panel with Live Mirroring
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def mini_web_home():
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Swiggy Bot - Live Web Mirroring Panel</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 30px; }
+            .container { background: #1e1e1e; padding: 25px; border-radius: 10px; max-width: 600px; margin: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.6); }
+            h1 { color: #ff5722; font-size: 22px; }
+            .card { background: #2a2a2a; padding: 15px; margin: 10px 0; border-radius: 8px; text-align: left; }
+            .status { color: #4caf50; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Live Web Mirroring Panel</h1>
+            <p>Bot actions sync here automatically (5s refresh rate)</p>
+            <div id="live-data" class="card">
+                <p>Loading live user data from bot...</p>
+            </div>
+        </div>
+
+        <script>
+            async function fetchLiveData() {
+                try {
+                    let response = await fetch('/get_live_state');
+                    let data = await response.json();
+                    let html = "<h3>📊 Recent Bot Activity / Users:</h3>";
+                    if(data.users && data.users.length > 0) {
+                        data.users.forEach(u => {
+                            html += `<div style="border-bottom: 1px solid #444; padding: 5px 0;">
+                                <b>User ID:</b> ${u.id} <br>
+                                <b>ID Balance:</b> ₹${u.id_balance || 0} | <b>Ref Balance:</b> ₹${u.ref_balance || 0} <br>
+                                <b>Linked Accounts:</b> ${u.accounts ? u.accounts.length : 0}
+                            </div>`;
+                        });
+                    } else {
+                        html += "<p>No active bot sessions found yet. Try /start in bot!</p>";
+                    }
+                    document.getElementById('live-data').innerHTML = html;
+                } catch(e) {
+                    console.log("Error fetching live data", e);
+                }
+            }
+            // 5 second lag / polling interval for live mirroring
+            setInterval(fetchLiveData, 5000);
+            fetchLiveData();
+        </script>
+    </body>
+    </html>
+    """)
+
+@app_flask.route('/get_live_state')
+def get_live_state():
+    users_data = []
+    if db:
+        try:
+            docs = db.collection("users").stream()
+            for doc in docs:
+                u_dict = doc.to_dict()
+                u_dict['id'] = doc.id
+                users_data.append(u_dict)
+        except Exception as e:
+            logger.error(f"Error fetching users for web: {e}")
+    return jsonify({"users": users_data})
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # Official Channels & Group Dictionary
 CHANNELS = {
@@ -203,7 +248,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_mini_web":
-        # यहाँ पर आपके Render वाले ऐप का लिंक आ जाएगा जो मिनी वेब खोलेगा
         mini_web_url = "https://swiggy-order-bot.onrender.com"
         kb = [
             [InlineKeyboardButton("🚀 Launch Mini Web", url=mini_web_url)],
@@ -418,7 +462,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
-    # Run Flask Mini Web server in background thread
+    # Run Flask server in background thread for live web mirroring
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -430,9 +474,34 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot and Mini Web are running smoothly on Render...")
+    logger.info("Bot and Live Web Mirroring Panel are running smoothly...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()get_user_data(user_id)
+        if "accounts" not in user_data:
+            user_data["accounts"] = []
+        user_data["accounts"].append({"json_data": mock_session_string})
+        update_user_data(user_id, user_data)
+        
+        await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
+        return
+
+def main():
+    # Run Flask server in background thread for live web mirroring
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Run Telegram Bot
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
+
+    logger.info("Bot and Live Web Mirroring Panel are running smoothly...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-    
