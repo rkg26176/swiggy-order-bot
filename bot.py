@@ -1,9 +1,8 @@
 import os
 import json
 import logging
-import asyncio
 import threading
-from flask import Flask
+from flask import Flask, render_template_string
 import firebase_admin
 from firebase_admin import credentials, firestore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,12 +16,33 @@ logger = logging.getLogger(__name__)
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
-# Initialize Flask for Render Port Binding
+# Initialize Flask for Mini Web Panel
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
-def home():
-    return "Bot is running live!"
+def mini_web_home():
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Swiggy Order Bot - Mini Web Panel</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 50px; }
+            .container { background: #1e1e1e; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+            h1 { color: #ff5722; }
+            p { color: #aaa; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Swiggy Order Bot Mini Web</h1>
+            <p>Real-time connected dashboard is active and running successfully!</p>
+        </div>
+    </body>
+    </html>
+    """)
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -183,8 +203,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_mini_web":
+        # यहाँ पर आपके Render वाले ऐप का लिंक आ जाएगा जो मिनी वेब खोलेगा
+        mini_web_url = "https://swiggy-order-bot.onrender.com"
         kb = [
-            [InlineKeyboardButton("🚀 Launch Mini Web", url="https://your-mini-web-app.com")],
+            [InlineKeyboardButton("🚀 Launch Mini Web", url=mini_web_url)],
             [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
         ]
         await query.message.edit_text("🌐 **Mini Web Dashboard**\n\nReal-time monitoring panel connected with your bot accounts:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
@@ -395,31 +417,21 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
         return
 
-async def run_bot():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
-    
-    logger.info("Bot is starting polling...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
 def main():
-    # Run Flask in background thread
+    # Run Flask Mini Web server in background thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Run Telegram Bot inside proper asyncio loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(run_bot())
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
+    # Run Telegram Bot
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
+
+    logger.info("Bot and Mini Web are running smoothly on Render...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
