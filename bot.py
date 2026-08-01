@@ -1,517 +1,233 @@
-import io
 import os
-import time
 import json
-import re
-import qrcode
-import requests
-import telebot
-from flask import Flask
-import firebase_admin
-from firebase_admin import credentials, firestore
-from telebot.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    WebAppInfo,
-    BotCommand,
-)
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-# ================= CONFIGURATION & SECRETS =================
-BOT_NAME = "GBX PANNEL BOT"
-BOT_TOKEN = "8813624728:AAG7ifIbJZAno8pBOO8XbpAaftdcbyPhl1k"
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", 7447932152))
+# Logging setup
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
-DIRECT_PAY_AMOUNT = 15.0
-MINI_APP_URL = "https://your-mini-web-url.com"
+# Environment Variables
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-app = Flask(__name__)
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+# In-Memory/Mock Databases (Railway/Firebase integration ready structure)
+user_balances = {}  # {user_id: {"id_balance": 0.0, "ref_balance": 0.0}}
+user_accounts = {}  # {user_id: [ {"account_name": "...", "json_data": "..."}, ... ]}
+pending_utrs = {}   # {utr_id: {"user_id": user_id, "amount": amount}}
 
-user_states = {}
+# Mandatory Channels for Force Join
+FORCED_CHANNELS = ["@your_channel_username"]  # Replace/Add your channels here
 
-# ================= FIREBASE INITIALIZATION =================
-# Railway environment variable ya JSON file se credentials load karein
-firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
-if firebase_creds_json:
-    cred_dict = json.loads(firebase_creds_json)
-    cred = credentials.Certificate(cred_dict)
-else:
-    # Agar local file ho toh uska path dein
-    cred = credentials.Certificate("firebase_credentials.json")
-
-firebase_admin.initialize_app(cred)
-db = firestore.client()
-
-# ================= CHANNELS & GC STRUCTURE =================
-CHANNELS = {
-    "-1003332858806": {
-        "name": "📢 GBX LOOT",
-        "url": "https://t.me/+6ByfGDRBKgsxMjZl",
-    },
-    "-1003630519339": {
-        "name": "📢 GBX EARN",
-        "url": "https://t.me/+OWrCoeF-JutmNjg1",
-    },
-    "-1003197501531": {
-        "name": "📢 GBX ZONE",
-        "url": "https://t.me/+f2mWfDs6EUIxYTBl",
-    },
-    "-1003862251237": {
-        "name": "💬 Join Group Chat (GC)",
-        "url": "https://t.me/+O_-kEF2f5f1kMjdl",
-    },
-}
-
-PERMANENT_VIP_USERS = [ADMIN_CHAT_ID]
-
-@app.route("/")
-def home():
-    return "GBX Panel Bot Active with Firebase!"
-
-# ================= DATABASE HELPERS (FIRESTORE) =================
-def register_or_get_user(user_id):
-    try:
-        user_ref = db.collection("users").document(str(user_id))
-        doc = user_ref.get()
-        is_vip = 1 if user_id in PERMANENT_VIP_USERS else 0
-        
-        if not doc.exists:
-            user_data = {
-                "user_id": user_id,
-                "points": 0,
-                "referred_by": None,
-                "referral_count": 0,
-                "ref_rewarded": 0,
-                "panel_unlocked": is_vip
-            }
-            user_ref.set(user_data)
-            return user_data
-        
-        data = doc.to_dict()
-        if is_vip == 1:
-            data["panel_unlocked"] = 1
-        return data
-    except Exception as e:
-        print("DB Error:", e)
-        return {"points": 0, "referral_count": 0, "panel_unlocked": 1 if user_id in PERMANENT_VIP_USERS else 0, "referred_by": None}
-
-def update_user_data(user_id, field, value):
-    try:
-        user_ref = db.collection("users").document(str(user_id))
-        user_ref.set({field: value}, merge=True)
-    except Exception as e:
-        print("Update error:", e)
-
-def get_all_users():
-    try:
-        users_ref = db.collection("users").stream()
-        user_set = {int(doc.id) for doc in users_ref}
-        for uid in PERMANENT_VIP_USERS:
-            user_set.add(uid)
-        return list(user_set)
-    except Exception:
-        return PERMANENT_VIP_USERS
-
-def is_utr_used(utr):
-    try:
-        utr_ref = db.collection("used_utrs").document(utr.strip())
-        return utr_ref.get().exists
-    except Exception:
-        return False
-
-def add_used_utr(utr):
-    try:
-        db.collection("used_utrs").document(utr.strip()).set({"used": True, "time": firestore.SERVER_TIMESTAMP})
-    except Exception:
-        pass
-
-# ================= FORCE JOIN SYSTEM =================
-def get_user_status_map(user_id):
-    status_map = {}
-    for channel_id in CHANNELS:
+async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    for channel in FORCED_CHANNELS:
         try:
-            member = bot.get_chat_member(chat_id=int(channel_id), user_id=user_id)
-            status_map[channel_id] = member.status not in [
-                "left",
-                "kicked",
-                "restricted",
-            ]
-        except Exception:
-            status_map[channel_id] = False
-    return status_map
+            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking channel {channel}: {e}")
+            return False
+    return True
 
-def show_dynamic_force_join(chat_id, user_name, status_map, message_id=None):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Force Join Check
+    is_joined = await check_force_join(update, context)
+    if not is_joined:
+        keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCED_CHANNELS[0].replace('@', '')}")],
+                    [InlineKeyboardButton("🔄 Check Join", callback_data="check_join")]]
+        await update.message.reply_text("❌ Please join our channels first to use this bot!", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # Initialize User Balance if not exists
+    if user_id not in user_balances:
+        user_balances[user_id] = {"id_balance": 100.0, "ref_balance": 0.0} # Starting mock balance for testing
+
+    # Main Menu with 4-dot/grid layout buttons
+    keyboard = [
+        [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"), InlineKeyboardButton("➕ Add Balance", callback_data="menu_add_balance")],
+        [InlineKeyboardButton("👤 Add Account", callback_data="menu_add_account"), InlineKeyboardButton("📂 My Accounts", callback_data="menu_my_accounts")],
+        [InlineKeyboardButton("🌐 Mini Web Panel", callback_data="menu_mini_web"), InlineKeyboardButton("💬 Customer Support", url="https://t.me/YourSupportUsername")]
+    ]
+    
     text = (
-        f"❌ **Access Denied, {user_name}!**\n\n"
-        "Aapne humare sabhi required 3 channels aur GC join nahi kiye hain."
+        "🤖 **Welcome to the Automation Bot**\n\n"
+        f"💳 **ID Balance:** ₹{user_balances[user_id]['id_balance']}\n"
+        f"👥 **Referral Balance:** ₹{user_balances[user_id]['ref_balance']}\n\n"
+        "Choose an option below:"
     )
-    markup = InlineKeyboardMarkup(row_width=1)
-    for ch_id, ch_info in CHANNELS.items():
-        if not status_map[ch_id]:
-            markup.add(
-                InlineKeyboardButton(text=ch_info["name"], url=ch_info["url"])
-            )
-    markup.add(
-        InlineKeyboardButton(
-            text="🔄 Check Joined / Verify", callback_data="verify_join"
-        )
-    )
-    try:
-        if message_id:
-            bot.edit_message_text(
-                text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown"
-            )
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+
+    if data == "check_join":
+        if await check_force_join(update, context):
+            await query.message.delete()
+            await start(update, context)
         else:
-            bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
-    except Exception:
-        pass
+            await query.answer("❌ You haven't joined all channels yet!", show_alert=True)
 
-def show_main_menu(chat_id, user_name):
-    user_data = register_or_get_user(chat_id)
-    panel_unlocked = 1 if chat_id in PERMANENT_VIP_USERS else int(user_data.get("panel_unlocked", 0))
+    elif data == "menu_balance":
+        bal = user_balances.get(user_id, {"id_balance": 0, "ref_balance": 0})
+        text = f"💰 **Your Wallet Status**\n\nID Balance: ₹{bal['id_balance']}\nReferral Balance: ₹{bal['ref_balance']}"
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    markup = InlineKeyboardMarkup(row_width=1)
-    
-    if panel_unlocked == 1:
-        text = (
-            f"✅ **Welcome back to GBX Pannel Bot, {user_name}!**\n\n"
-            "🎉 Aapka Web Panel unlocked hai! Niche diye gaye button se open karein 👇"
-        )
-        markup.add(
-            InlineKeyboardButton(
-                text="🌐 Open Web Mini App Panel",
-                web_app=WebAppInfo(url=MINI_APP_URL),
-            )
-        )
-    else:
-        text = (
-            f"✅ **Welcome to GBX Pannel Bot, {user_name}!**\n\n"
-            "Web Panel ka access lene ke liye ₹15 ki direct payment karein 👇"
-        )
-        markup.add(
-            InlineKeyboardButton(
-                text="💳 ₹15 Pay to Unlock Web Panel", callback_data="menu_pay"
-            ),
-        )
+    elif data == "menu_add_balance":
+        text = "➕ **Add Balance System**\n\nPlease send the amount you want to add (e.g., type `500`):"
+        context.user_data['waiting_for_amount'] = True
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
+    elif data == "menu_add_account":
+        text = "👤 **Add Account**\n\nPlease send your account JSON data to login and link with Mini Web session:"
+        context.user_data['waiting_for_json'] = True
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-# ================= BOT COMMANDS =================
-@bot.message_handler(commands=["start"])
-def start_command(message):
-    if message.chat.type != "private":
-        return
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name
-    user_states.pop(user_id, None)
+    elif data == "menu_my_accounts":
+        accounts = user_accounts.get(user_id, [])
+        if not accounts:
+            text = "📂 You have no logged-in accounts currently."
+        else:
+            text = "📂 **Your Logged-in Accounts:**\nSelect an account to manage:"
+        
+        kb = []
+        for idx, acc in enumerate(accounts):
+            kb.append([InlineKeyboardButton(f"Account {idx+1}", callback_data=f"manage_acc_{idx}")])
+        kb.append([InlineKeyboardButton("🔙 Back", callback_data="back_home")])
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    register_or_get_user(user_id)
+    elif data == "menu_mini_web":
+        # Mini Web link simulation with force join verification context inside bot view
+        kb = [
+            [InlineKeyboardButton("🚀 Open Mini Web", url="https://your-mini-web-url.com")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_home")]
+        ]
+        await query.message.edit_text("🌐 **Mini Web Dashboard**\n\nClick below to open the real-time panel securely inside the bot ecosystem:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    status_map = get_user_status_map(user_id)
-    if all(status_map.values()):
-        show_main_menu(message.chat.id, user_name)
-    else:
-        show_dynamic_force_join(message.chat.id, user_name, status_map)
+    elif data == "back_home":
+        await start(update, context)
 
-@bot.message_handler(commands=["panel"])
-def panel_command(message):
-    if message.chat.type != "private":
-        return
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name
+    elif data.startswith("manage_acc_"):
+        acc_idx = int(data.split("_")[-1])
+        kb = [
+            [InlineKeyboardButton("📤 Export Auth JSON", callback_data=f"export_acc_{acc_idx}")],
+            [InlineKeyboardButton("🔙 Back", callback_data="menu_my_accounts")]
+        ]
+        await query.message.edit_text(f"⚙️ **Manage Account #{acc_idx+1}**\nChoose an action:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    status_map = get_user_status_map(user_id)
-    if all(status_map.values()):
-        show_main_menu(message.chat.id, user_name)
-    else:
-        show_dynamic_force_join(message.chat.id, user_name, status_map)
+    elif data.startswith("export_acc_"):
+        acc_idx = int(data.split("_")[-1])
+        accounts = user_accounts.get(user_id, [])
+        if accounts and len(accounts) > acc_idx:
+            removed_acc = accounts.pop(acc_idx)
+            text = f"✅ **Account Exported & Removed Successfully!**\n\n`{removed_acc['json_data']}`"
+        else:
+            text = "❌ Account not found."
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="menu_my_accounts")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-@bot.message_handler(commands=["admin"])
-def admin_command(message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        return
-    
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton(text="📬 Inbox (Broadcast)", callback_data="admin_broadcast_mode"),
-    )
-    bot.send_message(
-        message.chat.id,
-        "🛠️ **Admin Master Dashboard**",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "verify_join")
-def handle_verification(call):
-    if call.message.chat.type != "private":
-        return
-    user_id = call.from_user.id
-    register_or_get_user(user_id)
-
-    status_map = get_user_status_map(user_id)
-    if all(status_map.values()):
-        bot.answer_callback_query(call.id, "🎉 Success!")
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
-        show_main_menu(call.message.chat.id, call.from_user.first_name)
-    else:
-        bot.answer_callback_query(
-            call.id, "❌ Saare 3 channels aur GC join karein!", show_alert=True
-        )
-        show_dynamic_force_join(
-            call.message.chat.id,
-            call.from_user.first_name,
-            status_map,
-            call.message.message_id,
-        )
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_pay")
-def handle_pay_menu(call):
-    if call.message.chat.type != "private":
-        return
-    user_id = call.from_user.id
-    user_states[user_id] = None
-
-    upi_url = f"upi://pay?pa={UPI_ID}&pn=GBX_Panel&am={DIRECT_PAY_AMOUNT}&cu=INR"
-    qr = qrcode.QRCode(box_size=10, border=2)
-    qr.add_data(upi_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-
-    caption_text = (
-        "💳 **Unlock Web Panel via Direct Payment**\n\n"
-        f"💰 **Amount:** `₹{DIRECT_PAY_AMOUNT}`\n"
-        f"📍 **UPI ID:** `{UPI_ID}`\n\n"
-        "📲 **Instructions:**\n"
-        "1. QR Code ko scan karke ₹15 ki exact payment karein.\n"
-        "2. Payment hone ke baad niche **'📝 Submit UTR'** button par click karke apna 12-digit UTR Number bhejein."
-    )
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-        pass
-
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton(text="📝 Submit UTR", callback_data="start_utr_input"),
-        InlineKeyboardButton(text="⬅️ Back", callback_data="back_home"),
-    )
-
-    bot.send_photo(
-        call.message.chat.id,
-        photo=buffer,
-        caption=caption_text,
-        reply_markup=markup,
-        parse_mode="Markdown",
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "start_utr_input")
-def handle_start_utr(call):
-    if call.message.chat.type != "private":
-        return
-    user_id = call.from_user.id
-    user_states[user_id] = "waiting_for_utr"
-
-    bot.answer_callback_query(call.id, "Kripya apna 12-digit UTR number type karke bhejein!")
-    try:
-        bot.send_message(
-            call.message.chat.id,
-            "✍️ **Ab apna 12-digit UTR Number chat mein type karke bhejein:**",
-            parse_mode="Markdown",
-        )
-    except Exception:
-        pass
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_home")
-def handle_back_home(call):
-    if call.message.chat.type != "private":
-        return
-    user_id = call.from_user.id
-    user_states.pop(user_id, None)
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except Exception:
-        pass
-    show_main_menu(call.message.chat.id, call.from_user.first_name)
-
-@bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast_mode")
-def admin_broadcast_callback(call):
-    if call.from_user.id != ADMIN_CHAT_ID:
-        return
-    user_states[ADMIN_CHAT_ID] = "waiting_for_broadcast"
-    bot.answer_callback_query(call.id, "Broadcast mode active!")
-    bot.send_message(
-        call.message.chat.id,
-        "✍️ **Ab aap jo bhi message bhejenge, vah sabhi users ke paas broadcast ho jayega.**\n\n❌ Cancel ke liye `/cancel` likhein.",
-        parse_mode="Markdown"
-    )
-
-@bot.message_handler(commands=["cancel"])
-def cancel_command(message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        return
-    user_states.pop(ADMIN_CHAT_ID, None)
-    bot.send_message(message.chat.id, "❌ Action cancel kar diya gaya hai.")
-
-# ================= MESSAGE & ANTI-FRAUD UTR HANDLER =================
-@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'sticker', 'audio', 'animation'])
-def handle_all_messages(message):
-    if message.chat.type != "private":
-        return
-    user_id = message.from_user.id
-    register_or_get_user(user_id)
-
-    # Broadcast handler
-    if user_id == ADMIN_CHAT_ID and user_states.get(ADMIN_CHAT_ID) == "waiting_for_broadcast":
-        user_states.pop(ADMIN_CHAT_ID, None)
-        users = get_all_users()
-        success = fail = 0
-        status_msg = bot.send_message(ADMIN_CHAT_ID, "🚀 Broadcasting message...")
-
-        for uid in users:
+    elif data.startswith("approve_"):
+        req_id = data.split("_")[1]
+        if req_id in pending_utrs:
+            req_data = pending_utrs[req_id]
+            target_user = req_data["user_id"]
+            amount = req_data["amount"]
+            
+            if target_user in user_balances:
+                user_balances[target_user]["id_balance"] += amount
+            
+            await query.message.edit_text(f"✅ Approved! ₹{amount} added to User ID: {target_user}")
             try:
-                bot.copy_message(chat_id=uid, from_chat_id=ADMIN_CHAT_ID, message_id=message.message_id)
-                success += 1
-                time.sleep(0.05)
+                await context.bot.send_message(chat_id=target_user, text=f"🎉 Your payment of ₹{amount} has been Approved and added to your balance!")
             except Exception:
-                fail += 1
+                pass
+            del pending_utrs[req_id]
 
-        bot.edit_message_text(
-            f"✅ **Broadcast Completed!**\nSuccess: `{success}`\nFailed: `{fail}`",
-            ADMIN_CHAT_ID,
-            status_msg.message_id,
+    elif data.startswith("reject_"):
+        req_id = data.split("_")[1]
+        if req_id in pending_utrs:
+            req_data = pending_utrs[req_id]
+            target_user = req_data["user_id"]
+            await query.message.edit_text(f"❌ Rejected payment request for User ID: {target_user}")
+            try:
+                await context.bot.send_message(chat_id=target_user, text="❌ Your payment request was rejected by admin.")
+            except Exception:
+                pass
+            del pending_utrs[req_id]
+
+async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if context.user_data.get('waiting_for_amount'):
+        context.user_data['waiting_for_amount'] = False
+        try:
+            amount = float(text)
+            req_id = str(user_id) + "_" + str(int(os.urandom(2).hex(), 16))
+            pending_utrs[req_id] = {"user_id": user_id, "amount": amount}
+
+            # Generate Mock QR and ask for UTR
+            await update.message.reply_text(
+                f"🧾 **QR Generated for Amount: ₹{amount}**\n\n"
+                "Please scan the QR code, pay the amount, and send your **UTR / Transaction ID** here:"
+            )
+            context.user_data['waiting_for_utr'] = {"amount": amount, "req_id": req_id}
+        except ValueError:
+            await update.message.reply_text("❌ Invalid amount format. Please type numbers only.")
+        return
+
+    if context.user_data.get('waiting_for_utr'):
+        utr_data = context.user_data.pop('waiting_for_utr')
+        amount = utr_data['amount']
+        req_id = utr_data['req_id']
+        utr = text
+
+        # Send to Admin for Approval/Rejection with inline web-like buttons
+        admin_keyboard = [
+            [InlineKeyboardButton("✅ Accept", callback_data=f"approve_{req_id}"),
+             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{req_id}")]
+        ]
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"🔔 **New UTR Payment Verification**\n\nUser ID: `{user_id}`\nAmount: ₹{amount}\nUTR: `{utr}`",
+            reply_markup=InlineKeyboardMarkup(admin_keyboard),
             parse_mode="Markdown"
         )
+        await update.message.reply_text("✅ UTR submitted successfully! Waiting for admin approval.")
         return
 
-    # UTR Input & Anti-Fraud Duplicate Check Handler
-    state = user_states.get(user_id)
-    if state == "waiting_for_utr":
-        if not message.text or not message.text.strip().isdigit() or len(message.text.strip()) != 12:
-            bot.send_message(message.chat.id, "❌ Kripya valid 12-digit UTR Number hi dalein.")
-            return
-
-        text = message.text.strip()
-        
-        # 🛡️ DEDUPLICATION CHECK (Prevents UTR reuse fraud)
-        if is_utr_used(text):
-            bot.send_message(message.chat.id, "❌ Yeh UTR Number pehle hi use ho chuka hai! Duplicate UTR not allowed.")
-            user_states.pop(user_id, None)
-            return
-
-        add_used_utr(text)
-        user_states.pop(user_id, None)
-
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton(text="✅ Accept", callback_data=f"adm_accept:{user_id}:{text}"),
-            InlineKeyboardButton(text="❌ Reject", callback_data=f"adm_reject:{user_id}:{text}"),
-        )
-
-        try:
-            bot.send_message(
-                ADMIN_CHAT_ID,
-                f"📥 **Panel Payment Request!**\nUser ID: `{user_id}`\nAmount: ₹{DIRECT_PAY_AMOUNT}\nUTR: `{text}`",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            print("Admin Send Error:", e)
-
-        bot.send_message(
-            message.chat.id,
-            "⏳ Payment Verification Pending by Admin. Kripya intezaar karein."
-        )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_"))
-def admin_action(call):
-    if call.from_user.id != ADMIN_CHAT_ID:
-        bot.answer_callback_query(call.id, "Unauthorized!")
+    if context.user_data.get('waiting_for_json'):
+        context.user_data['waiting_for_json'] = False
+        if user_id not in user_accounts:
+            user_accounts[user_id] = []
+        user_accounts[user_id].append({"json_data": text})
+        await update.message.reply_text("✅ Account JSON saved and linked successfully with Mini Web session!")
         return
 
-    data = call.data.split(":")
-    action = data[0]
-    target = int(data[1])
-    try:
-        bot.answer_callback_query(call.id)
-    except Exception:
-        pass
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    if action == "adm_accept":
-        update_user_data(target, "panel_unlocked", 1)
-        try:
-            bot.edit_message_text(
-                f"✅ Approved! Web Panel unlocked for User `{target}`.",
-                call.message.chat.id,
-                call.message.message_id,
-            )
-        except Exception:
-            pass
-        try:
-            markup = InlineKeyboardMarkup()
-            markup.add(
-                InlineKeyboardButton(
-                    text="🌐 Open Web Mini App Panel",
-                    web_app=WebAppInfo(url=MINI_APP_URL),
-                )
-            )
-            bot.send_message(
-                target,
-                "🎉 **Payment Verified Successfully!**\nAapka Web Mini App Panel unlock kar diya gaya hai 👇",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-    else:
-        try:
-            bot.edit_message_text(
-                f"❌ Rejected request for User `{target}`.",
-                call.message.chat.id,
-                call.message.message_id,
-            )
-        except Exception:
-            pass
-        try:
-            bot.send_message(target, "❌ Aapki payment request Admin dwara reject kar di gayi hai.")
-        except Exception:
-            pass
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_router))
 
-def set_bot_commands(bot_instance):
-    commands = [
-        BotCommand("start", "Start the bot"),
-        BotCommand("panel", "Open Web Panel / Unlock Menu"),
-        BotCommand("admin", "Open Admin Dashboard")
-    ]
-    try:
-        bot_instance.set_my_commands(commands)
-    except Exception as e:
-        print("Set commands error:", e)
-
-def run_bot():
-    while True:
-        try:
-            bot.remove_webhook()
-            time.sleep(1)
-            set_bot_commands(bot)
-            print("Bot Polling Active with Firebase...")
-            bot.infinity_polling(timeout=30, long_polling_timeout=30, skip_pending=True)
-        except Exception as e:
-            print("Polling error:", e)
-            time.sleep(5)
+    logger.info("Bot is starting...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    import threading
-    t = threading.Thread(target=run_bot, daemon=True)
-    t.start()
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    main()
+    
