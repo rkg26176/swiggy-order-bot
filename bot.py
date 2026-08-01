@@ -1,5 +1,8 @@
 import os
+import json
 import logging
+import firebase_admin
+from firebase_admin import credentials, firestore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -7,17 +10,28 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Callb
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment Variables & Admin ID
+# Environment Variables & Admin ID (नया टोकन यहाँ सीधे सेट कर दिया है)
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
-# Databases & State Storage
-user_balances = {}   # {user_id: {"id_balance": 100.0, "ref_balance": 0.0}}
-user_accounts = {}   # {user_id: [{"json_data": "..."}]}
-pending_utrs = {}    # {req_id: {"user_id": user_id, "amount": amount}}
-all_users = set()    # Track all unique users for User List
+# Initialize Firebase
+try:
+    firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
+    if firebase_creds_json:
+        cred_dict = json.loads(firebase_creds_json)
+        cred = credentials.Certificate(cred_dict)
+    else:
+        cred = credentials.Certificate("firebase_key.json")
+    
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    logger.info("Firebase connected successfully!")
+except Exception as e:
+    logger.error(f"Firebase initialization failed: {e}")
+    db = None
 
-# Official Channels & Group Dictionary provided by you
+# Official Channels & Group Dictionary
 CHANNELS = {
     "-1003332858806": {
         "name": "📢 GBX LOOT",
@@ -49,11 +63,28 @@ async def check_force_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return False
     return True
 
+def get_user_data(user_id):
+    if not db:
+        return {"id_balance": 100.0, "ref_balance": 0.0, "accounts": []}
+    doc_ref = db.collection("users").document(str(user_id))
+    doc = doc_ref.get()
+    if doc.exists:
+        return doc.to_dict()
+    else:
+        default_data = {"id_balance": 100.0, "ref_balance": 0.0, "accounts": []}
+        doc_ref.set(default_data)
+        return default_data
+
+def update_user_data(user_id, data):
+    if db:
+        db.collection("users").document(str(user_id)).set(data, merge=True)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    all_users.add(user_id)
 
-    # Force Join Check
+    if db:
+        db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
+
     if not await check_force_join(update, context):
         keyboard = []
         for chat_id, info in CHANNELS.items():
@@ -67,11 +98,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
-    # Initialize Balance
-    if user_id not in user_balances:
-        user_balances[user_id] = {"id_balance": 100.0, "ref_balance": 0.0}
+    user_data = get_user_data(user_id)
 
-    # Main Menu (4-dot / Grid Layout + Admin Panel option if admin)
     keyboard = [
         [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"), InlineKeyboardButton("➕ Add Balance", callback_data="menu_add_balance")],
         [InlineKeyboardButton("👤 Add Account", callback_data="menu_add_account"), InlineKeyboardButton("📂 My Accounts", callback_data="menu_my_accounts")],
@@ -83,8 +111,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "🤖 **Main Dashboard**\n\n"
-        f"💳 **ID Balance:** ₹{user_balances[user_id]['id_balance']}\n"
-        f"👥 **Referral Balance:** ₹{user_balances[user_id]['ref_balance']}\n\n"
+        f"💳 **ID Balance:** ₹{user_data.get('id_balance', 100.0)}\n"
+        f"👥 **Referral Balance:** ₹{user_data.get('ref_balance', 0.0)}\n\n"
         "Select an option below:"
     )
 
@@ -106,8 +134,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ You haven't joined all required chats yet!", show_alert=True)
 
     elif data == "menu_balance":
-        bal = user_balances.get(user_id, {"id_balance": 0, "ref_balance": 0})
-        text = f"💰 **Wallet Overview**\n\nID Balance: ₹{bal['id_balance']}\nReferral Balance: ₹{bal['ref_balance']}"
+        user_data = get_user_data(user_id)
+        text = f"💰 **Wallet Overview**\n\nID Balance: ₹{user_data.get('id_balance', 0)}\nReferral Balance: ₹{user_data.get('ref_balance', 0)}"
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
@@ -127,7 +155,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
     elif data == "menu_my_accounts":
-        accounts = user_accounts.get(user_id, [])
+        user_data = get_user_data(user_id)
+        accounts = user_data.get("accounts", [])
         if not accounts:
             text = "📂 No active accounts found. Please add an account first."
             kb = [[InlineKeyboardButton("🔙 Back", callback_data="back_home")]]
@@ -170,7 +199,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।", show_alert=True)
             return
         page = int(data.split("_")[-1])
-        users_list = list(all_users)
+        
+        users_list = []
+        if db:
+            docs = db.collection("all_users").stream()
+            users_list = [doc.id for doc in docs]
+
         per_page = 10
         total_pages = (len(users_list) + per_page - 1) // per_page
         
@@ -208,10 +242,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("export_acc_"):
         acc_idx = int(data.split("_")[-1])
-        accounts = user_accounts.get(user_id, [])
+        user_data = get_user_data(user_id)
+        accounts = user_data.get("accounts", [])
         if accounts and len(accounts) > acc_idx:
             removed = accounts.pop(acc_idx)
-            text = f"✅ **Account Exported Successfully! Session Removed.**\n\n`{removed['json_data']}`"
+            user_data["accounts"] = accounts
+            update_user_data(user_id, user_data)
+            text = f"✅ **Account Exported Successfully! Session Removed.**\n\n`{removed.get('json_data', '')}`"
         else:
             text = "❌ Account not found."
         kb = [[InlineKeyboardButton("🔙 Back", callback_data="menu_my_accounts")]]
@@ -219,46 +256,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("approve_"):
         req_id = data.split("_")[1]
-        if req_id in pending_utrs:
-            req_data = pending_utrs[req_id]
+        req_ref = db.collection("pending_utrs").document(req_id).get() if db else None
+        if req_ref and req_ref.exists:
+            req_data = req_ref.to_dict()
             target_user = req_data["user_id"]
             amount = req_data["amount"]
 
-            if target_user in user_balances:
-                user_balances[target_user]["id_balance"] += amount
+            target_data = get_user_data(target_user)
+            target_data["id_balance"] = target_data.get("id_balance", 0) + amount
+            update_user_data(target_user, target_data)
 
             await query.message.edit_text(f"✅ Approved! ₹{amount} added to User ID: {target_user}")
             try:
                 await context.bot.send_message(chat_id=target_user, text=f"🎉 Your payment of ₹{amount} has been approved by admin!")
             except Exception:
                 pass
-            del pending_utrs[req_id]
+            db.collection("pending_utrs").document(req_id).delete()
 
     elif data.startswith("reject_"):
         req_id = data.split("_")[1]
-        if req_id in pending_utrs:
-            req_data = pending_utrs[req_id]
+        req_ref = db.collection("pending_utrs").document(req_id).get() if db else None
+        if req_ref and req_ref.exists:
+            req_data = req_ref.to_dict()
             target_user = req_data["user_id"]
             await query.message.edit_text(f"❌ Rejected payment request for User ID: {target_user}")
             try:
                 await context.bot.send_message(chat_id=target_user, text="❌ Your payment request was rejected by admin.")
             except Exception:
                 pass
-            del pending_utrs[req_id]
+            db.collection("pending_utrs").document(req_id).delete()
 
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    all_users.add(user_id)
+    if db:
+        db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
 
-    # Admin Broadcast Handler (Supports text, stickers, photos, documents, etc.)
     if context.user_data.get('waiting_for_broadcast'):
         if user_id != ADMIN_CHAT_ID:
             return
         context.user_data['waiting_for_broadcast'] = False
         
+        users_list = []
+        if db:
+            docs = db.collection("all_users").stream()
+            users_list = [int(doc.id) for doc in docs]
+
         success_count = 0
         fail_count = 0
-        for uid in all_users:
+        for uid in users_list:
             try:
                 await update.message.copy(chat_id=uid)
                 success_count += 1
@@ -268,13 +313,14 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📢 **Broadcast Completed!**\n\n✅ Success: {success_count}\n❌ Failed: {fail_count}")
         return
 
-    # Add Balance Amount Input
     if context.user_data.get('waiting_for_amount'):
         context.user_data['waiting_for_amount'] = False
         try:
             amount = float(update.message.text)
             req_id = str(user_id) + "_" + str(int(os.urandom(2).hex(), 16))
-            pending_utrs[req_id] = {"user_id": user_id, "amount": amount}
+            
+            if db:
+                db.collection("pending_utrs").document(req_id).set({"user_id": user_id, "amount": amount})
 
             await update.message.reply_text(
                 f"🧾 **QR Code Generated for ₹{amount}**\n\n"
@@ -285,7 +331,6 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Please enter valid numbers only.")
         return
 
-    # UTR Submission Input
     if context.user_data.get('waiting_for_utr'):
         utr_data = context.user_data.pop('waiting_for_utr')
         amount = utr_data['amount']
@@ -305,33 +350,33 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ UTR sent to admin for verification!")
         return
 
-    # 2-in-1 Auto-detect Account Input (JSON Token or Phone Number for OTP)
     if context.user_data.get('waiting_for_account_input'):
         context.user_data['waiting_for_account_input'] = False
         user_input = update.message.text.strip()
 
-        # Check if input is JSON format or Phone Number
+        user_data = get_user_data(user_id)
+        if "accounts" not in user_data:
+            user_data["accounts"] = []
+
         if user_input.startswith("{") and user_input.endswith("}"):
-            if user_id not in user_accounts:
-                user_accounts[user_id] = []
-            user_accounts[user_id].append({"json_data": user_input})
+            user_data["accounts"].append({"json_data": user_input})
+            update_user_data(user_id, user_data)
             await update.message.reply_text("✅ JSON Session Token detected, saved and linked successfully with Mini Web session!")
         else:
-            # Treated as Phone Number for OTP login flow integration
             await update.message.reply_text(f"📱 Phone number `{user_input}` received. OTP request triggered. Please send your OTP code next:")
             context.user_data['waiting_for_otp'] = {"phone": user_input}
         return
 
-    # OTP Input Handler for Phone Login
     if context.user_data.get('waiting_for_otp'):
         otp_data = context.user_data.pop('waiting_for_otp')
         otp_code = update.message.text.strip()
         
-        # Mock session string creation on successful verification
         mock_session_string = f"session_token_for_{otp_data['phone']}_verified"
-        if user_id not in user_accounts:
-            user_accounts[user_id] = []
-        user_accounts[user_id].append({"json_data": mock_session_string})
+        user_data = get_user_data(user_id)
+        if "accounts" not in user_data:
+            user_data["accounts"] = []
+        user_data["accounts"].append({"json_data": mock_session_string})
+        update_user_data(user_id, user_data)
         
         await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
         return
@@ -343,7 +388,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Bot is running with full error-free setup, pagination and 2-in-1 auto-detect...")
+    logger.info("Bot is running smoothly on Render...")
     app.run_polling()
 
 if __name__ == "__main__":
