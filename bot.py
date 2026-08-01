@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 import threading
 from flask import Flask
 import firebase_admin
@@ -394,22 +395,32 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ OTP verified successfully! Session string generated and linked with Mini Web.")
         return
 
+async def run_bot():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
+    
+    logger.info("Bot is starting polling...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
 def main():
-    # Run Flask server in background thread
+    # Run Flask in background thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Run Telegram Bot using Modern Application Builder with proper loop handling
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
-
-    logger.info("Bot is running smoothly on Render with modern application builder...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    # Run Telegram Bot inside proper asyncio loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(run_bot())
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     main()
-                      
+    
