@@ -1,14 +1,12 @@
 import os
 import json
 import logging
-import asyncio
 import threading
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Update
-from aiogram.filters import Command
+import telebot
+from telebot import types
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -18,10 +16,9 @@ logger = logging.getLogger(__name__)
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
-# Initialize Flask for Webhook & Mini Web Dashboard
+# Initialize Flask for Mini Web Dashboard & Render Port Binding
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
@@ -89,15 +86,9 @@ def get_live_state():
             logger.error(f"Web sync error: {e}")
     return jsonify({"users": users_data})
 
-# Webhook route for Telegram
-@app_flask.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
-def webhook_handler():
-    if request.headers.get('content-type') == 'application/json':
-        json_data = request.get_json()
-        update = Update.model_validate(json_data, context={"bot": bot})
-        asyncio.run_coroutine_threadsafe(dp.feed_update(bot, update), loop)
-        return '', 200
-    return 'Invalid request', 403
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # Initialize Firebase
 try:
@@ -124,11 +115,11 @@ CHANNELS = {
     "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"},
 }
 
-async def get_unjoined_channels(user_id):
+def get_unjoined_channels(user_id):
     unjoined = {}
     for chat_id, info in CHANNELS.items():
         try:
-            member = await bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
+            member = bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
             if member.status in ['left', 'kicked']:
                 unjoined[chat_id] = info
         except Exception:
@@ -154,34 +145,37 @@ def update_user_data(user_id, data):
     if db:
         db.collection("users").document(str(user_id)).set(data, merge=True)
 
-@dp.message(Command("start"))
-async def start_command(message: Message):
+@bot.message_handler(commands=['start'])
+def start_command(message):
     user_id = message.from_user.id
     if db:
         db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": message.from_user.username or "None"})
 
-    unjoined = await get_unjoined_channels(user_id)
+    unjoined = get_unjoined_channels(user_id)
     if unjoined:
-        keyboard = []
+        keyboard = types.InlineKeyboardMarkup()
         for chat_id, info in unjoined.items():
-            keyboard.append([InlineKeyboardButton(text=info["name"], url=info["url"])])
-        keyboard.append([InlineKeyboardButton(text="🔄 Verify Joined Status", callback_data="check_join")])
+            keyboard.add(types.InlineKeyboardButton(text=info["name"], url=info["url"]))
+        keyboard.add(types.InlineKeyboardButton(text="🔄 Verify Joined Status", callback_data="check_join"))
         
-        await message.answer(
+        bot.send_message(
+            user_id,
             "❌ **Access Denied!**\nYou must join all the required channels and group chats below to use this bot:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-            parse_mode="Markdown"
+            reply_markup=keyboard
         )
         return
 
     user_data = get_user_data(user_id)
-    ref_link = f"https://t.me/{(await bot.me()).username}?start=ref_{user_id}"
+    ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
 
-    keyboard = [
-        [InlineKeyboardButton(text="💰 Balance", callback_data="menu_balance"), InlineKeyboardButton(text="👤 Add Account", callback_data="menu_add_account")],
-        [InlineKeyboardButton(text="📂 Accounts", callback_data="menu_my_accounts"), InlineKeyboardButton(text="💬 Support", url="https://t.me/YourSupportBotLink")],
-        [InlineKeyboardButton(text="🌐 Mini Web", url="https://swiggy-order-bot.onrender.com")]
-    ]
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton(text="💰 Balance", callback_data="menu_balance"),
+        types.InlineKeyboardButton(text="👤 Add Account", callback_data="menu_add_account"),
+        types.InlineKeyboardButton(text="📂 Accounts", callback_data="menu_my_accounts"),
+        types.InlineKeyboardButton(text="💬 Support", url="https://t.me/YourSupportBotLink"),
+        types.InlineKeyboardButton(text="🌐 Mini Web", url="https://swiggy-order-bot.onrender.com")
+    )
 
     text = (
         "🤖 **Swiggy Bot Dashboard**\n\n"
@@ -189,91 +183,80 @@ async def start_command(message: Message):
         f"👥 **Referral Link:** `{ref_link}`\n\n"
         "Select an option below:"
     )
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="Markdown")
+    bot.send_message(user_id, text, reply_markup=keyboard)
 
-@dp.callback_query(F.data == "check_join")
-async def check_join_callback(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    unjoined = await get_unjoined_channels(user_id)
-    if not unjoined:
-        await callback.message.delete()
-        await start_command(callback.message)
-    else:
-        await callback.answer("❌ You still haven't joined all chats!", show_alert=True)
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    data = call.data
 
-@dp.callback_query(F.data == "menu_balance")
-async def menu_balance_callback(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    user_data = get_user_data(user_id)
-    ref_link = f"https://t.me/{(await bot.me()).username}?start=ref_{user_id}"
-    text = (
-        f"💰 **Wallet Overview**\n\n"
-        f"💳 **Current Balance:** ₹{user_data.get('id_balance', 0)}\n"
-        f"👥 **Referral Link:** `{ref_link}`\n\n"
-        f"📥 **To add balance, please send the exact amount you want to deposit (e.g. `500`):**"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Back", callback_data="back_home")]])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    if data == "check_join":
+        unjoined = get_unjoined_channels(user_id)
+        if not unjoined:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            start_command(call.message)
+        else:
+            bot.answer_callback_query(call.id, "❌ You still haven't joined all chats!", show_alert=True)
 
-@dp.callback_query(F.data == "menu_add_account")
-async def menu_add_account_callback(callback: CallbackQuery):
-    text = (
-        "👤 **Add Account System**\n\n"
-        "Please send either your **JSON Session Token** OR your **Phone Number** to link with your account:"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Back", callback_data="back_home")]])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    elif data == "menu_balance":
+        user_data = get_user_data(user_id)
+        ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+        text = (
+            f"💰 **Wallet Overview**\n\n"
+            f"💳 **Current Balance:** ₹{user_data.get('id_balance', 0)}\n"
+            f"👥 **Referral Link:** `{ref_link}`\n\n"
+            f"📥 **To add balance, please send the exact amount you want to deposit (e.g. `500`):**"
+        )
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
 
-@dp.callback_query(F.data == "menu_my_accounts")
-async def menu_my_accounts_callback(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    user_data = get_user_data(user_id)
-    accounts = user_data.get("accounts", [])
-    if not accounts:
-        text = "📂 No active accounts found. Please add an account first."
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Back", callback_data="back_home")]])
-    else:
-        text = "📂 **Your Logged-in Accounts:**\nSelect an account to manage/export:"
-        kb_list = []
-        for idx, acc in enumerate(accounts):
-            kb_list.append([InlineKeyboardButton(text=f"Account {idx+1}", callback_data=f"manage_acc_{idx}")])
-        kb_list.append([InlineKeyboardButton(text="🔙 Back", callback_data="back_home")])
-        kb = InlineKeyboardMarkup(inline_keyboard=kb_list)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    elif data == "menu_add_account":
+        text = (
+            "👤 **Add Account System**\n\n"
+            "Please send either your **JSON Session Token** OR your **Phone Number** to link with your account:"
+        )
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
 
-@dp.callback_query(F.data == "back_home")
-async def back_home_callback(callback: CallbackQuery):
-    await callback.message.delete()
-    await start_command(callback.message)
+    elif data == "menu_my_accounts":
+        user_data = get_user_data(user_id)
+        accounts = user_data.get("accounts", [])
+        kb = types.InlineKeyboardMarkup()
+        if not accounts:
+            text = "📂 No active accounts found. Please add an account first."
+        else:
+            text = "📂 **Your Logged-in Accounts:**\nSelect an account to manage/export:"
+            for idx, acc in enumerate(accounts):
+                kb.add(types.InlineKeyboardButton(text=f"Account {idx+1}", callback_data=f"manage_acc_{idx}"))
+        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
 
-@dp.message(Command("admin"))
-async def admin_command(message: Message):
+    elif data == "back_home":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        start_command(call.message)
+
+@bot.message_handler(commands=['admin'])
+def admin_command(message):
     if message.from_user.id != ADMIN_CHAT_ID:
-        await message.answer("❌ यह कमांड सिर्फ एडमिन के लिए है।")
+        bot.reply_to(message, "❌ यह कमांड सिर्फ एडमिन के लिए है।")
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="👥 User List", callback_data="admin_users_0")]
-    ])
-    await message.answer("⚙️ **Admin Control Panel**", reply_markup=kb, parse_mode="Markdown")
-
-loop = None
-
-async def setup_webhook():
-    webhook_url = f"https://swiggy-order-bot.onrender.com/webhook/{BOT_TOKEN}"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"Webhook set to: {webhook_url}")
-
-def run_flask():
-    global loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Set webhook on startup
-    loop.run_until_complete(setup_webhook())
-    
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(
+        types.InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast"),
+        types.InlineKeyboardButton(text="👥 User List", callback_data="admin_users_0")
+    )
+    bot.send_message(message.chat.id, "⚙️ **Admin Control Panel**", reply_markup=kb)
 
 if __name__ == "__main__":
-    run_flask()
+    # Start Flask in background thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Clear webhook and start infinity polling cleanly
+    bot.remove_webhook()
+    logger.info("TeleBot starting polling...")
+    bot.infinity_polling(skip_pending=True)
+    
