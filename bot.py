@@ -84,7 +84,7 @@ def get_channels_keyboard():
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     if db is None:
-        await message.error("⚠️ Database is not connected. Please check server logs.")
+        await message.answer("⚠️ Database is not connected. Please add FIREBASE_CREDENTIALS_JSON in Render environment variables.")
         return
 
     user_id = message.from_user.id
@@ -316,7 +316,10 @@ async def dummy_sections(message: Message):
 # --- 5. MAIN FUNCTION ---
 async def main():
     print("Bot is starting...")
+    # Purane webhook / conflicts clear karne ke liye drop_pending_updates=True use kiya gaya hai
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
