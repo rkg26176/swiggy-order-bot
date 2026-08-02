@@ -3,11 +3,11 @@ import json
 import logging
 import asyncio
 import threading
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, request, render_template_string, jsonify
 import firebase_admin
 from firebase_admin import credentials, firestore
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Update
 from aiogram.filters import Command
 
 # Logging setup
@@ -21,7 +21,7 @@ BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Initialize Flask for Mini Web Dashboard
+# Initialize Flask for Webhook & Mini Web Dashboard
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
@@ -89,9 +89,15 @@ def get_live_state():
             logger.error(f"Web sync error: {e}")
     return jsonify({"users": users_data})
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
+# Webhook route for Telegram
+@app_flask.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
+def webhook_handler():
+    if request.headers.get('content-type') == 'application/json':
+        json_data = request.get_json()
+        update = Update.model_validate(json_data, context={"bot": bot})
+        asyncio.run_coroutine_threadsafe(dp.feed_update(bot, update), loop)
+        return '', 200
+    return 'Invalid request', 403
 
 # Initialize Firebase
 try:
@@ -251,17 +257,23 @@ async def admin_command(message: Message):
     ])
     await message.answer("⚙️ **Admin Control Panel**", reply_markup=kb, parse_mode="Markdown")
 
-async def main():
-    # Start Flask in background
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+loop = None
 
-    # Clear webhook and start polling cleanly
-    await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Aiogram Bot starting...")
-    await dp.start_polling(bot)
+async def setup_webhook():
+    webhook_url = f"https://swiggy-order-bot.onrender.com/webhook/{BOT_TOKEN}"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to: {webhook_url}")
+
+def run_flask():
+    global loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Set webhook on startup
+    loop.run_until_complete(setup_webhook())
+    
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    
+    run_flask()
