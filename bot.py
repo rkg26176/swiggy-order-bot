@@ -1,3 +1,5 @@
+import os
+import json
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F
@@ -31,11 +33,19 @@ CHANNELS = {
 
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 
-# --- FIREBASE INITIALIZATION ---
-# Note: Ensure that 'firebase_credentials.json' is in your project directory
-if not firebase_admin._apps:
-    cred = credentials.Certificate("firebase_credentials.json")
-    firebase_admin.initialize_app(cred)
+# --- FIREBASE INITIALIZATION (VIA ENVIRONMENT VARIABLE) ---
+# Render/Railway ke liye JSON ko environment variable se read karne ka secure tarika
+try:
+    firebase_config = json.loads(os.environ.get("FIREBASE_CREDENTIALS_JSON", "{}"))
+    if not firebase_admin._apps and firebase_config:
+        cred = credentials.Certificate(firebase_config)
+        firebase_admin.initialize_app(cred)
+    elif not firebase_admin._apps:
+        # Fallback local file ke liye agar env variable na ho
+        cred = credentials.Certificate("firebase_credentials.json")
+        firebase_admin.initialize_app(cred)
+except Exception as e:
+    logging.error(f"Firebase Initialization Error: {e}")
 
 db = firestore.client()
 
@@ -295,4 +305,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                   
+    
