@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 import threading
 from flask import Flask, render_template_string, jsonify
 import firebase_admin
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
 BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
-# Initialize Flask for Mini Web Panel (Swiggy Order Bot Connected)
+# Initialize Flask for Mini Web Panel
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
@@ -105,7 +106,7 @@ except Exception as e:
     logger.error(f"Firebase initialization failed: {e}")
     db = None
 
-# Channels & Group Dictionary (2 Channels & 2 GCs)
+# Channels & Group Dictionary
 CHANNELS = {
     "-1003332858806": {"name": "📢 GBX LOOT 1", "url": "https://t.me/+6ByfGDRBKgsxMjZl"},
     "-1003630519339": {"name": "📢 GBX EARN 2", "url": "https://t.me/+OWrCoeF-JutmNjg1"},
@@ -143,13 +144,6 @@ def get_user_data(user_id):
 def update_user_data(user_id, data):
     if db:
         db.collection("users").document(str(user_id)).set(data, merge=True)
-
-async def set_bot_commands(bot):
-    commands = [
-        BotCommand("start", "Start the bot & open dashboard"),
-        BotCommand("admin", "Admin Control Panel")
-    ]
-    await bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -363,7 +357,6 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
 
-    # Force join check on any message
     unjoined = await get_unjoined_channels(context.bot, user_id)
     if unjoined:
         return
@@ -435,7 +428,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"🔔 **New UTR Verification Request**\n\nUser ID: `{user_id}`\nAmount: ₹{amount}\nUTR: `{utr}`",
-            reply_markup=InlineKeyboardMarkup(admin_keyword),
+            reply_markup=InlineKeyboardMarkup(admin_keyboard),
             parse_mode="Markdown"
         )
         await update.message.reply_text("✅ UTR submitted successfully! Waiting for admin verification.")
@@ -472,7 +465,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ OTP verified successfully! Account session generated and linked.")
         return
 
-def main():
+async def run_bot():
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -485,8 +478,17 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Swiggy Bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    logger.info("Swiggy Bot starting with async runner...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    
+    # Keep alive loop for Render
+    stop_event = asyncio.Event()
+    await stop_event.wait()
+
+def main():
+    asyncio.run(run_bot())
 
 if __name__ == "__main__":
     main()
