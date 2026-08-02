@@ -123,7 +123,8 @@ async def get_unjoined_channels(bot, user_id):
                 unjoined[chat_id] = info
         except Exception as e:
             logger.error(f"Error checking chat {chat_id}: {e}")
-            unjoined[chat_id] = info
+            # Agar bot khud channel me admin nahi hai ya koi aur API error hai, toh access block na ho isliye ignore karein ya safe side rakhein
+            pass
     return unjoined
 
 def get_user_data(user_id):
@@ -150,7 +151,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
 
     if db:
-        db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": user.username or "None"})
+        try:
+            db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": user.username or "None"})
+        except Exception:
+            pass
 
     unjoined = await get_unjoined_channels(context.bot, user_id)
     if unjoined:
@@ -161,9 +165,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text = "❌ **Access Denied!**\nYou must join all the required channels and group chats below to use this bot:"
         if update.callback_query:
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            try:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
         else:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            try:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            except Exception:
+                pass
         return
 
     user_data = get_user_data(user_id)
@@ -183,9 +193,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if update.callback_query:
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        except Exception:
+            pass
     else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        try:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        except Exception:
+            pass
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -355,7 +371,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if db:
-        db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
+        try:
+            db.collection("all_users").document(str(user_id)).set({"user_id": user_id})
+        except Exception:
+            pass
 
     unjoined = await get_unjoined_channels(context.bot, user_id)
     if unjoined:
@@ -465,6 +484,9 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ OTP verified successfully! Account session generated and linked.")
         return
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
 async def run_bot():
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
@@ -478,12 +500,14 @@ async def run_bot():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), message_router))
 
-    logger.info("Swiggy Bot starting with async runner...")
+    # Register error handler to prevent crashing
+    app.add_error_handler(error_handler)
+
+    logger.info("Swiggy Bot starting with error handler...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
     
-    # Keep alive loop for Render
     stop_event = asyncio.Event()
     await stop_event.wait()
 
