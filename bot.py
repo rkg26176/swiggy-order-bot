@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import threading
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 import firebase_admin
 from firebase_admin import credentials, firestore
 import telebot
@@ -18,7 +18,7 @@ BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
-# Initialize Flask for Mini Web Dashboard & Render Port Binding
+# Initialize Flask for Webhook & Mini Web Dashboard
 app_flask = Flask(__name__)
 
 @app_flask.route('/')
@@ -86,9 +86,16 @@ def get_live_state():
             logger.error(f"Web sync error: {e}")
     return jsonify({"users": users_data})
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
+# Telegram Webhook Route
+@app_flask.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return 'Forbidden', 403
 
 # Initialize Firebase
 try:
@@ -250,13 +257,13 @@ def admin_command(message):
     bot.send_message(message.chat.id, "⚙️ **Admin Control Panel**", reply_markup=kb)
 
 if __name__ == "__main__":
-    # Start Flask in background thread
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Clear webhook and start infinity polling cleanly
+    # Set Webhook automatically on startup
+    RENDER_URL = "https://swiggy-order-bot.onrender.com"
     bot.remove_webhook()
-    logger.info("TeleBot starting polling...")
-    bot.infinity_polling(skip_pending=True)
-    
+    bot.set_webhook(url=f"{RENDER_URL}/webhook/{BOT_TOKEN}")
+    logger.info("Webhook set successfully!")
+
+    # Run Flask App
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port)
+        
