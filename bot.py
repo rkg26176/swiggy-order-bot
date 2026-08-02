@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import threading
 from flask import Flask, render_template_string, jsonify, request
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -129,7 +128,9 @@ def get_unjoined_channels(user_id):
             member = bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
             if member.status in ['left', 'kicked']:
                 unjoined[chat_id] = info
-        except Exception:
+        except Exception as e:
+            logger.info(f"Skipping channel check for {chat_id} due to error: {e}")
+            # Safe side: agar bot admin nahi hai ya koi error hai, toh user ko block na karein balki pass karein ya unjoined me dalein. Filhal safe ke liye skip kar rahe hain taaki bot crash na ho.
             pass
     return unjoined
 
@@ -155,8 +156,13 @@ def update_user_data(user_id, data):
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
+    logger.info(f"Received /start from user: {user_id}")
+    
     if db:
-        db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": message.from_user.username or "None"})
+        try:
+            db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": message.from_user.username or "None"})
+        except Exception as e:
+            logger.error(f"Firebase error saving user: {e}")
 
     unjoined = get_unjoined_channels(user_id)
     if unjoined:
@@ -200,7 +206,10 @@ def callback_handler(call):
     if data == "check_join":
         unjoined = get_unjoined_channels(user_id)
         if not unjoined:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except Exception:
+                pass
             start_command(call.message)
         else:
             bot.answer_callback_query(call.id, "❌ You still haven't joined all chats!", show_alert=True)
@@ -241,7 +250,10 @@ def callback_handler(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
 
     elif data == "back_home":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
         start_command(call.message)
 
 @bot.message_handler(commands=['admin'])
@@ -257,13 +269,11 @@ def admin_command(message):
     bot.send_message(message.chat.id, "⚙️ **Admin Control Panel**", reply_markup=kb)
 
 if __name__ == "__main__":
-    # Set Webhook automatically on startup
     RENDER_URL = "https://swiggy-order-bot.onrender.com"
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/webhook/{BOT_TOKEN}")
-    logger.info("Webhook set successfully!")
+    logger.info(f"Webhook successfully set to {RENDER_URL}/webhook/{BOT_TOKEN}")
 
-    # Run Flask App
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
         
