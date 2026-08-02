@@ -128,30 +128,35 @@ def get_unjoined_channels(user_id):
             member = bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
             if member.status in ['left', 'kicked']:
                 unjoined[chat_id] = info
-        except Exception as e:
-            logger.info(f"Skipping channel check for {chat_id} due to error: {e}")
-            # Safe side: agar bot admin nahi hai ya koi error hai, toh user ko block na karein balki pass karein ya unjoined me dalein. Filhal safe ke liye skip kar rahe hain taaki bot crash na ho.
+        except Exception:
             pass
     return unjoined
 
 def get_user_data(user_id):
     if not db:
         return {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
-    doc_ref = db.collection("users").document(str(user_id))
-    doc = doc_ref.get()
-    if doc.exists:
-        data = doc.to_dict()
-        if "used_utrs" not in data:
-            data["used_utrs"] = []
-        return data
-    else:
-        default_data = {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
-        doc_ref.set(default_data)
-        return default_data
+    try:
+        doc_ref = db.collection("users").document(str(user_id))
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            if "used_utrs" not in data:
+                data["used_utrs"] = []
+            return data
+        else:
+            default_data = {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
+            doc_ref.set(default_data)
+            return default_data
+    except Exception as e:
+        logger.error(f"Error fetching user data: {e}")
+        return {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
 
 def update_user_data(user_id, data):
     if db:
-        db.collection("users").document(str(user_id)).set(data, merge=True)
+        try:
+            db.collection("users").document(str(user_id)).set(data, merge=True)
+        except Exception as e:
+            logger.error(f"Error updating user data: {e}")
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -162,7 +167,7 @@ def start_command(message):
         try:
             db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": message.from_user.username or "None"})
         except Exception as e:
-            logger.error(f"Firebase error saving user: {e}")
+            logger.error(f"Error saving all_users: {e}")
 
     unjoined = get_unjoined_channels(user_id)
     if unjoined:
@@ -179,7 +184,10 @@ def start_command(message):
         return
 
     user_data = get_user_data(user_id)
-    ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+    try:
+        ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+    except Exception:
+        ref_link = f"https://t.me/swiggy_order_bot?start=ref_{user_id}"
 
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -216,7 +224,10 @@ def callback_handler(call):
 
     elif data == "menu_balance":
         user_data = get_user_data(user_id)
-        ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+        try:
+            ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
+        except Exception:
+            ref_link = f"https://t.me/swiggy_order_bot?start=ref_{user_id}"
         text = (
             f"💰 **Wallet Overview**\n\n"
             f"💳 **Current Balance:** ₹{user_data.get('id_balance', 0)}\n"
@@ -276,4 +287,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
-        
+    
