@@ -34,20 +34,20 @@ CHANNELS = {
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 
 # --- FIREBASE INITIALIZATION (VIA ENVIRONMENT VARIABLE) ---
-# Render/Railway ke liye JSON ko environment variable se read karne ka secure tarika
+db = None
 try:
-    firebase_config = json.loads(os.environ.get("FIREBASE_CREDENTIALS_JSON", "{}"))
-    if not firebase_admin._apps and firebase_config:
-        cred = credentials.Certificate(firebase_config)
-        firebase_admin.initialize_app(cred)
-    elif not firebase_admin._apps:
-        # Fallback local file ke liye agar env variable na ho
-        cred = credentials.Certificate("firebase_credentials.json")
-        firebase_admin.initialize_app(cred)
+    env_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if env_json:
+        firebase_config = json.loads(env_json)
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(firebase_config)
+            firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        logging.info("Firebase connected successfully via Environment Variable.")
+    else:
+        logging.error("CRITICAL ERROR: 'FIREBASE_CREDENTIALS_JSON' environment variable is missing on Render!")
 except Exception as e:
     logging.error(f"Firebase Initialization Error: {e}")
-
-db = firestore.client()
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -83,9 +83,12 @@ def get_channels_keyboard():
 # --- 1. START & FORCE SUBSCRIPTION CHECK ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    if db is None:
+        await message.error("⚠️ Database is not connected. Please check server logs.")
+        return
+
     user_id = message.from_user.id
 
-    # Firebase user check & insert
     user_ref = db.collection("users").document(str(user_id))
     user_doc = user_ref.get()
     
@@ -96,7 +99,6 @@ async def cmd_start(message: Message):
             "is_verified": False
         })
 
-    # Check membership across all 4 channels/groups
     is_member = True
     for chat_id in CHANNELS.keys():
         try:
@@ -124,6 +126,10 @@ async def cmd_start(message: Message):
 
 @dp.callback_query(F.data == "verify_join")
 async def verify_join_callback(callback: CallbackQuery):
+    if db is None:
+        await callback.answer("⚠️ Database error!", show_alert=True)
+        return
+
     user_id = callback.from_user.id
     is_member = True
 
@@ -152,6 +158,10 @@ async def verify_join_callback(callback: CallbackQuery):
 # --- 2. BALANCE & DEPOSIT SYSTEM (UPI & UNIQUE UTR) ---
 @dp.message(F.text == "💰 Balance")
 async def show_balance(message: Message):
+    if db is None:
+        await message.answer("⚠️ Database is not connected.")
+        return
+
     user_id = message.from_user.id
     user_doc = db.collection("users").document(str(user_id)).get()
     balance = user_doc.to_dict().get("balance", 0.0) if user_doc.exists else 0.0
@@ -204,12 +214,15 @@ async def process_deposit_amount(message: Message, state: FSMContext):
 
 @dp.message(DepositState.waiting_for_utr)
 async def process_utr(message: Message, state: FSMContext):
+    if db is None:
+        await message.answer("⚠️ Database is not connected.")
+        return
+
     utr = message.text.strip()
     if len(utr) != 12 or not utr.isdigit():
         await message.answer("❌ Invalid UTR! Kripya 12 digit ka valid UTR number bhejein.")
         return
 
-    # Check duplicate UTR in Firebase
     utr_query = db.collection("transactions").document(utr).get()
     if utr_query.exists:
         await message.answer("⚠️ **Error:** Yeh UTR pehle hi use kiya ja chuka hai! Duplicate UTR allowed nahi hai.")
@@ -219,7 +232,6 @@ async def process_utr(message: Message, state: FSMContext):
     amount = data.get("amount")
     user_id = message.from_user.id
 
-    # Save transaction as pending in Firebase
     tx_data = {
         "user_id": user_id,
         "amount": amount,
@@ -231,7 +243,6 @@ async def process_utr(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ **UTR Submitted Successfully!** Admin approval ke baad balance add kar diya jayega.", reply_markup=get_main_menu())
 
-    # Send Approval request to Main Admin ID
     admin_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -251,6 +262,10 @@ async def process_utr(message: Message, state: FSMContext):
 # --- 3. ADMIN APPROVAL / REJECTION HANDLER ---
 @dp.callback_query(F.data.startswith(("approve_", "reject_")))
 async def handle_admin_decision(callback: CallbackQuery):
+    if db is None:
+        await callback.answer("⚠️ Database error!", show_alert=True)
+        return
+
     if callback.from_user.id != ADMIN_CHAT_ID:
         await callback.answer("⚠️ Yeh action sirf admin ke liye hai!", show_alert=True)
         return
@@ -305,4 +320,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
