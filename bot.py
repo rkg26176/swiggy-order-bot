@@ -107,7 +107,7 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
-# --- Main Reply Keyboard (Four Dot / Bottom Menu with WebApp Buttons) ---
+# --- Main Reply Keyboard (Four Dot / Bottom Menu) ---
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -116,7 +116,7 @@ def get_main_keyboard():
     )
     markup.add(
         KeyboardButton("💰 Balance & Refer"),
-        KeyboardButton("💬 Support", web_app=WebAppInfo(url=SUPPORT_BOT))
+        KeyboardButton("💬 Support")
     )
     markup.add(
         KeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
@@ -321,6 +321,11 @@ def handle_text_messages(message):
         markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money_prompt"))
         
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
+        
+    elif text == "💬 Support":
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
+        bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
         
     conn.close()
 
