@@ -42,8 +42,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 try:
     bot.set_my_commands([
         BotCommand("start", "Start the Bot & Open Menu"),
-        BotCommand("admin", "Open Admin Dashboard"),
-        BotCommand("cancel", "Cancel Ongoing Action")
+        BotCommand("admin", "Open Admin Dashboard")
     ])
 except Exception as e:
     print(f"Menu commands error: {e}")
@@ -116,7 +115,7 @@ def get_main_keyboard():
     )
     markup.add(
         KeyboardButton("💰 Balance & Refer"),
-        KeyboardButton("💬 Support")
+        KeyboardButton("💬 Support", web_app=WebAppInfo(url=SUPPORT_BOT))
     )
     markup.add(
         KeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
@@ -254,12 +253,6 @@ def admin_panel(message):
         parse_mode="Markdown"
     )
 
-@bot.message_handler(commands=['cancel'])
-def cancel_command(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    bot.send_message(message.chat.id, "❌ Current action has been cancelled.", reply_markup=get_main_keyboard())
-
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     user_id = message.from_user.id
@@ -321,11 +314,6 @@ def handle_text_messages(message):
         markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money_prompt"))
         
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
-        
-    elif text == "💬 Support":
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
-        bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
         
     conn.close()
 
@@ -408,7 +396,7 @@ def admin_actions(call):
     if data == "admin_broadcast":
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("❌ Cancel Broadcast", callback_data="admin_cancel_broadcast"))
-        msg = bot.send_message(call.message.chat.id, "📢 Send the message, photo or sticker you want to broadcast to all users:\n\n*(Ya cancel karne ke liye niche button dabayein ya /cancel bhejein)*", reply_markup=markup)
+        msg = bot.send_message(call.message.chat.id, "📢 Send the message, photo or sticker you want to broadcast to all users:\n\n*(Broadcast cancel karne ke liye niche button par click karein)*", reply_markup=markup)
         bot.register_next_step_handler(msg, execute_broadcast)
         
     elif data == "admin_cancel_broadcast":
@@ -474,10 +462,6 @@ def admin_actions(call):
         conn.close()
 
 def execute_broadcast(message):
-    if message.text and message.text.strip().lower() == "/cancel":
-        bot.send_message(message.chat.id, "❌ Broadcast has been cancelled.")
-        return
-
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
