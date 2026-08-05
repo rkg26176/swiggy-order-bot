@@ -107,7 +107,7 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
-# --- Main Reply Keyboard (Four Dot / Bottom Menu) ---
+# --- Main Reply Keyboard (Four Dot / Bottom Menu with WebApp Buttons) ---
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -116,10 +116,10 @@ def get_main_keyboard():
     )
     markup.add(
         KeyboardButton("💰 Balance & Refer"),
-        KeyboardButton("💬 Support")
+        KeyboardButton("💬 Support", web_app=WebAppInfo(url=SUPPORT_BOT))
     )
     markup.add(
-        KeyboardButton("🚀 Open Swiggy Mini Web")
+        KeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
     )
     return markup
 
@@ -321,18 +321,6 @@ def handle_text_messages(message):
         markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money_prompt"))
         
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
-        
-    elif text == "💬 Support":
-        # Direct Inline Button for Support (No extra text message)
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
-        bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
-        
-    elif text == "🚀 Open Swiggy Mini Web":
-        # Direct Inline WebApp Button for Mini Web
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
-        bot.send_message(message.chat.id, "🚀 Swiggy Mini App Panel:", reply_markup=markup)
         
     conn.close()
 
