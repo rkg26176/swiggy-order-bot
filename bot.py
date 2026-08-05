@@ -4,12 +4,29 @@ import json
 import sqlite3
 import random
 import string
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, BotCommand
 import firebase_admin
 from firebase_admin import credentials, firestore
 import qrcode
 from io import BytesIO
+
+# --- Dummy HTTP Server for Render Web Service Port Binding ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+# Start dummy server in background thread so Render port check passes
+threading.Thread(target=run_server, daemon=True).start()
 
 # --- Credentials & Config ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
@@ -133,7 +150,7 @@ def send_force_sub_prompt(chat_id, user_id, message_id=None):
         markup.add(InlineKeyboardButton(info["name"], url=info["url"]))
     markup.add(InlineKeyboardButton("🔄 Check & Verify", callback_data="check_sub"))
     
-    text = "⚠️ **Please join the remaining channels below to use this bot!**\n\n(जो चैनल तुमने ज्वाइन कर लिए हैं, वे वेरीफाई करते ही ऑटोमैटिक हट जाएंगे):"
+    text = "⚠️ **Please join the remaining channels below to use this bot!**\n\n(Jo channel tumne join kar liye hain, ve verify karte hi automatic hat jayenge):"
     
     if message_id:
         try:
@@ -220,7 +237,7 @@ def verify_subscription_callback(call):
         
         try:
             bot.edit_message_text(
-                "❌ आपने अभी तक सभी चैनल ज्वाइन नहीं किए हैं!\n\nजो चैनल बचे हैं, उन्हें ज्वाइन करके दोबारा '🔄 Check & Verify' पर क्लिक करें:",
+                "❌ Aapne abhi tak sabhi channel join nahi kiye hain!\n\nJo channel bache hain, unhe join karke dobara '🔄 Check & Verify' par click karein:",
                 call.message.chat.id,
                 call.message.message_id,
                 reply_markup=markup,
@@ -233,7 +250,7 @@ def verify_subscription_callback(call):
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ यह कमांड सिर्फ एडमिन के लिए है।")
+        bot.send_message(message.chat.id, "❌ Yah command sirf admin ke liye hai.")
         return
         
     markup = InlineKeyboardMarkup(row_width=2)
@@ -266,7 +283,7 @@ def handle_text_messages(message):
         
         bot.send_message(
             message.chat.id,
-            "⚠️ **Access Denied!** आपने हमारा कोई चैनल छोड़ (Leave) दिया है। कृपया नीचे दिए गए चैनल को दोबारा ज्वाइन करें और वेरीफाई करें:",
+            "⚠️ **Access Denied!** Aapne hamara koi channel chhod (Leave) diya hai. Kripya niche diye gaye channel ko dobara join karein aur verify karein:",
             reply_markup=markup,
             parse_mode="Markdown"
         )
