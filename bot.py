@@ -18,6 +18,14 @@ UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 SUPPORT_BOT = "https://t.me/gbx_support_bot"
 MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
 
+# Required Channels Dictionary
+CHANNELS = {
+    "-1003332858806": {"name": "📢 GBX LOOT 1", "url": "https://t.me/+6ByfGDRBKgsxMjZl"},
+    "-1003630519339": {"name": "📢 GBX EARN 2", "url": "https://t.me/+OWrCoeF-JutmNjg1"},
+    "-1003862251237": {"name": "💬 GBX GC 1", "url": "https://t.me/+O_-kEF2f5f1kMjdl"},
+    "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"}
+}
+
 # 2. Firebase Setup
 firebase_json_str = os.environ.get('FIREBASE_CREDENTIALS')
 if firebase_json_str:
@@ -30,7 +38,7 @@ else:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Set Telegram Blue Menu Button Commands (Side Menu)
+# Set Telegram Blue Menu Button Commands
 try:
     bot.set_my_commands([
         BotCommand("start", "Start the Bot & Open Menu"),
@@ -72,21 +80,26 @@ init_db()
 def generate_ref_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
+# --- Helper: Get Unjoined Channels for a User ---
+def get_unjoined_channels(user_id):
+    unjoined = {}
+    for cid, info in CHANNELS.items():
+        try:
+            member = bot.get_chat_member(chat_id=cid, user_id=user_id)
+            if member.status not in ['creator', 'administrator', 'member']:
+                unjoined[cid] = info
+        except Exception as e:
+            print(f"Error checking channel {cid} for user {user_id}: {e}")
+            unjoined[cid] = info  # अगर एरर आए तो सेफ साइड के लिए पेंडिंग मान लो
+    return unjoined
+
 # --- Helper: Generate UPI QR Code Image ---
 def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     upi_string = f"upi://pay?pa={upi_id}&pn={name}&am={amount}&cu=INR"
-    
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=4,
-    )
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
     qr.add_data(upi_string)
     qr.make(fit=True)
-    
     img = qr.make_image(fill_color="black", back_color="white")
-    
     bio = io.BytesIO()
     bio.name = "upi_qr.png"
     img.save(bio, "PNG")
@@ -109,6 +122,29 @@ def get_main_keyboard():
     )
     return markup
 
+# --- Send Dynamic Force Sub Message ---
+def send_force_sub_prompt(chat_id, user_id, message_id=None):
+    unjoined = get_unjoined_channels(user_id)
+    if not unjoined:
+        return True  # सारे चैनल ज्वाइन हैं
+        
+    markup = InlineKeyboardMarkup(row_width=1)
+    for cid, info in unjoined.items():
+        markup.add(InlineKeyboardButton(info["name"], url=info["url"]))
+    markup.add(InlineKeyboardButton("🔄 Check & Verify", callback_data="check_sub"))
+    
+    text = "⚠️ **Please join the remaining channels below to use this bot!**\n\n(जो चैनल तुमने ज्वाइन कर लिए हैं, वे वेरीफाई करते ही ऑटोमैटिक हट जाएंगे):"
+    
+    if message_id:
+        try:
+            bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode="Markdown")
+            return False
+        except Exception:
+            pass
+            
+    bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
+    return False
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -123,6 +159,11 @@ def send_welcome(message):
     if res and res[0] == 1:
         conn.close()
         bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
+        return
+
+    # Check Dynamic Force Sub
+    if not send_force_sub_prompt(message.chat.id, user_id):
+        conn.close()
         return
 
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -154,6 +195,44 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
+# --- Check Subscription Callback (Dynamic Update) ---
+@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
+def verify_subscription_callback(call):
+    user_id = call.from_user.id
+    unjoined = get_unjoined_channels(user_id)
+    
+    if not unjoined:
+        bot.answer_callback_query(call.id, "✅ All channels verified successfully!")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        
+        bot.send_message(
+            call.message.chat.id,
+            "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\nChoose an option from the menu below:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        # अभी भी कुछ चैनल बचे हैं, तो मैसेज को एडिट करके सिर्फ बचे हुए चैनल्स ही दिखाओ
+        markup = InlineKeyboardMarkup(row_width=1)
+        for cid, info in unjoined.items():
+            markup.add(InlineKeyboardButton(info["name"], url=info["url"]))
+        markup.add(InlineKeyboardButton("🔄 Check & Verify", callback_data="check_sub"))
+        
+        try:
+            bot.edit_message_text(
+                "❌ आपने अभी तक सभी चैनल ज्वाइन नहीं किए हैं!\n\nजो चैनल बचे हैं, उन्हें ज्वाइन करके दोबारा '🔄 Check & Verify' पर क्लिक करें:",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "❌ Some channels are still pending!", show_alert=True)
+
 # --- Admin Panel Command ---
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
@@ -178,11 +257,27 @@ def admin_panel(message):
         parse_mode="Markdown"
     )
 
-# --- Handle Text Messages from Bottom Keyboard ---
+# --- Handle Text Messages & Universal Leave Detection ---
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     user_id = message.from_user.id
     
+    # Universal Check: अगर यूजर ने बोट इस्तेमाल करते वक्त कोई भी चैनल छोड़ दिया है, तो तुरंत पकड़ लो!
+    unjoined = get_unjoined_channels(user_id)
+    if unjoined:
+        markup = InlineKeyboardMarkup(row_width=1)
+        for cid, info in unjoined.items():
+            markup.add(InlineKeyboardButton(info["name"], url=info["url"]))
+        markup.add(InlineKeyboardButton("🔄 Check & Verify", callback_data="check_sub"))
+        
+        bot.send_message(
+            message.chat.id,
+            "⚠️ **Access Denied!** आपने हमारा कोई चैनल छोड़ (Leave) दिया है। कृपया नीचे दिए गए चैनल को दोबारा ज्वाइन करें और वेरीफाई करें:",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        return
+
     # Check if user is blocked
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
@@ -192,11 +287,8 @@ def handle_text_messages(message):
         conn.close()
         bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
         return
-    conn.close()
 
     text = message.text
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
     
     if text == "👤 My Account":
         cursor.execute("SELECT account_name FROM accounts WHERE user_id = ?", (user_id,))
@@ -438,5 +530,5 @@ def execute_unblock(message):
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("Swiggy Automation Bot with Admin Panel is running live...")
+    print("Swiggy Automation Bot with Dynamic Force Sub & Leave Detection is running live...")
     bot.infinity_polling()
