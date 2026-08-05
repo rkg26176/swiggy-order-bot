@@ -128,7 +128,7 @@ def send_welcome(message):
     if user_doc.exists:
         user_data = user_doc.to_dict()
         if user_data.get('is_blocked', 0) == 1:
-            bot.send_message(message.chat.ID, "❌ You are blocked from using this bot.")
+            bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
             return
 
     if not send_force_sub_prompt(message.chat.id, user_id):
@@ -397,7 +397,7 @@ def process_amount_step(message):
         bot.send_photo(
             message.chat.id,
             photo=qr_bio,
-            caption=f"📲 **Scan & Pay ₹{amount}**\n\nUPI ID: `{UPI_ID}`\n\n*After completing payment, click the button below to submit your UTR / Reference Number:*",
+            caption=f"📲 **Scan & Pay ₹{amount}**\n\nUPI ID: `{UPI_ID}`\n\n*After completing payment, click the button below to submit your 12-digit UTR / Reference Number:*",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -410,15 +410,16 @@ def handle_upi_submit(call):
     tx_id, amount = data_parts[2], data_parts[3]
     
     bot.answer_callback_query(call.id)
-    msg = bot.send_message(call.message.chat.id, f"📝 Please send your 12-digit UTR / Reference Number for ₹{amount}:", parse_mode="Markdown")
+    msg = bot.send_message(call.message.chat.id, f"📝 Please send your exactly **12-digit UTR** / Reference Number for ₹{amount}:", parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
 
 def process_utr_step(message, tx_id, amount):
     user_id = message.from_user.id
     utr = message.text.strip()
     
-    if len(utr) < 6:
-        msg = bot.send_message(message.chat.id, "❌ Invalid UTR format. Please send a valid UTR / Reference Number:")
+    # Strictly validate that UTR must be exactly 12 digits (numeric)
+    if not utr.isdigit() or len(utr) != 12:
+        msg = bot.send_message(message.chat.id, "❌ **Invalid UTR!** UTR must be exactly **12 digits** long numbers only. Please send again:")
         bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
         return
 
