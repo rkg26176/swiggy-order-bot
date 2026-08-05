@@ -1,14 +1,20 @@
 import io
-import qrcode
+import os
+import json
 import sqlite3
 import random
 import string
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+import firebase_admin
+from firebase_admin import credentials, firestore
+import qrcode
+from io import BytesIO
 
-# --- Credentials & Config ---
-BOT_TOKEN = "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw"
-ADMIN_ID = 8053042225
+# --- Credentials & Config (Render Environment Variable Support) ---
+# 1. Telegram Bot Token (एनवायरनमेंट से या फॉલबैक के तौर पर यहाँ)
+BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
+ADMIN_ID = int(os.environ.get('ADMIN_ID', 8053042225))
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 SUPPORT_BOT = "https://t.me/gbx_support_bot"
 MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
@@ -20,6 +26,17 @@ CHANNELS = {
     "-1003862251237": {"name": "💬 GBX GC 1", "url": "https://t.me/+O_-kEF2f5f1kMjdl"},
     "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"}
 }
+
+# 2. Firebase Setup (Render के Environment Variable से JSON लोड करना)
+firebase_json_str = os.environ.get('FIREBASE_CREDENTIALS')
+if firebase_json_str:
+    firebase_config = json.loads(firebase_json_str)
+    cred = credentials.Certificate(firebase_config)
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+else:
+    # लोकल टेस्टिंग के लिए यदि एनवायरनमेंट सेट न हो
+    db = None
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -56,10 +73,8 @@ def generate_ref_code():
 
 # --- Helper: Generate UPI QR Code Image ---
 def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
-    # UPI URI format for direct payment amount embedding
     upi_string = f"upi://pay?pa={upi_id}&pn={name}&am={amount}&cu=INR"
     
-    # Generate QR Code using 'qrcode' and 'Pillow'
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -71,7 +86,6 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     
     img = qr.make_image(fill_color="black", back_color="white")
     
-    # Save image to bytes buffer so telegram can send it directly without saving to disk
     bio = io.BytesIO()
     bio.name = "upi_qr.png"
     img.save(bio, "PNG")
@@ -130,13 +144,13 @@ def handle_callbacks(call):
         accounts = cursor.fetchall()
         if not accounts:
             bot.answer_callback_query(call.id, "No accounts added yet!")
-            bot.send_message(call.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.")
+            bot.send_message(call.message.chat.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.")
         else:
             acc_list = "\n".join([f"🔹 {acc[0]}" for acc in accounts])
-            bot.send_message(call.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown")
+            bot.send_message(call.message.chat.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown")
             
     elif call.data == "add_account":
-        msg = bot.send_message(call.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
+        msg = bot.send_message(call.message.chat.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
         bot.register_next_step_handler(msg, save_account_step)
         
     elif call.data == "balance_menu":
@@ -160,7 +174,7 @@ def handle_callbacks(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
         
     elif call.data == "add_money":
-        msg = bot.send_message(call.id, "💳 Please enter the amount you want to add (Minimum **₹10**):")
+        msg = bot.send_message(call.message.chat.id, "💳 Please enter the amount you want to add (Minimum **₹10**):")
         bot.register_next_step_handler(msg, process_amount_step)
         
     elif call.data == "main_menu":
