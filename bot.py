@@ -5,29 +5,20 @@ import sqlite3
 import random
 import string
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 import firebase_admin
 from firebase_admin import credentials, firestore
 import qrcode
 from io import BytesIO
 
-# --- Credentials & Config (Render Environment Variable Support) ---
-# 1. Telegram Bot Token (एनवायरनमेंट से या फॉલबैक के तौर पर यहाँ)
+# --- Credentials & Config ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 8053042225))
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 SUPPORT_BOT = "https://t.me/gbx_support_bot"
 MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
 
-# Required Channels Dictionary
-CHANNELS = {
-    "-1003332858806": {"name": "📢 GBX LOOT 1", "url": "https://t.me/+6ByfGDRBKgsxMjZl"},
-    "-1003630519339": {"name": "📢 GBX EARN 2", "url": "https://t.me/+OWrCoeF-JutmNjg1"},
-    "-1003862251237": {"name": "💬 GBX GC 1", "url": "https://t.me/+O_-kEF2f5f1kMjdl"},
-    "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"}
-}
-
-# 2. Firebase Setup (Render के Environment Variable से JSON लोड करना)
+# 2. Firebase Setup
 firebase_json_str = os.environ.get('FIREBASE_CREDENTIALS')
 if firebase_json_str:
     firebase_config = json.loads(firebase_json_str)
@@ -35,7 +26,6 @@ if firebase_json_str:
     firebase_admin.initialize_app(cred)
     db = firestore.client()
 else:
-    # लोकल टेस्टिंग के लिए यदि एनवायरनमेंट सेट न हो
     db = None
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -92,6 +82,22 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
+# --- Main Reply Keyboard (नीचे चार डॉट / मेनू वाला कीबोर्ड) ---
+def get_main_keyboard():
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        KeyboardButton("👤 My Account"),
+        KeyboardButton("➕ Add Account")
+    )
+    markup.add(
+        KeyboardButton("💰 Balance & Refer"),
+        KeyboardButton("💬 Support")
+    )
+    markup.add(
+        KeyboardButton("🚀 Open Swiggy Mini Web")
+    )
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -118,48 +124,42 @@ def send_welcome(message):
         conn.commit()
     conn.close()
     
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("👤 My Account", callback_data="my_account"),
-        InlineKeyboardButton("➕ Add Account", callback_data="add_account")
+    bot.send_message(
+        message.chat.id, 
+        "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\nChoose an option from the menu below:", 
+        reply_markup=get_main_keyboard(), 
+        parse_mode="Markdown"
     )
-    markup.add(
-        InlineKeyboardButton("💰 Balance & Refer", callback_data="balance_menu"),
-        InlineKeyboardButton("💬 Support", url=SUPPORT_BOT)
-    )
-    markup.add(
-        InlineKeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
-    )
-    
-    bot.send_message(message.chat.id, "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\nChoose an option below:", reply_markup=markup, parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data in ["my_account", "add_account", "balance_menu", "add_money", "main_menu"])
-def handle_callbacks(call):
-    user_id = call.from_user.id
+# --- Handle Text Messages from Bottom Keyboard ---
+@bot.message_handler(func=lambda message: True)
+def handle_text_messages(message):
+    user_id = message.from_user.id
+    text = message.text
+    
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     
-    if call.data == "my_account":
+    if text == "👤 My Account":
         cursor.execute("SELECT account_name FROM accounts WHERE user_id = ?", (user_id,))
         accounts = cursor.fetchall()
         if not accounts:
-            bot.answer_callback_query(call.id, "No accounts added yet!")
-            bot.send_message(call.message.chat.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.")
+            bot.send_message(message.chat.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.", reply_markup=get_main_keyboard())
         else:
             acc_list = "\n".join([f"🔹 {acc[0]}" for acc in accounts])
-            bot.send_message(call.message.chat.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown")
+            bot.send_message(message.chat.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown", reply_markup=get_main_keyboard())
             
-    elif call.data == "add_account":
-        msg = bot.send_message(call.message.chat.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
+    elif text == "➕ Add Account":
+        msg = bot.send_message(message.chat.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
         bot.register_next_step_handler(msg, save_account_step)
         
-    elif call.data == "balance_menu":
+    elif text == "💰 Balance & Refer":
         cursor.execute("SELECT balance, referrals, ref_code FROM users WHERE user_id = ?", (user_id,))
         user_data = cursor.fetchone()
         balance, referrals, ref_code = user_data[0], user_data[1], user_data[2]
         ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
         
-        text = (
+        resp_text = (
             f"💰 **Your Wallet & Referral Details**\n\n"
             f"• **Total Balance:** ₹{balance}\n"
             f"• **Total Referrals:** {referrals} (Earned ₹{referrals * 3})\n\n"
@@ -168,30 +168,18 @@ def handle_callbacks(call):
         )
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money"))
-        markup.add(InlineKeyboardButton("« Back to Menu", callback_data="main_menu"))
+        markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money_prompt"))
         
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
         
-    elif call.data == "add_money":
-        msg = bot.send_message(call.message.chat.id, "💳 Please enter the amount you want to add (Minimum **₹10**):")
-        bot.register_next_step_handler(msg, process_amount_step)
+    elif text == "💬 Support":
+        bot.send_message(message.chat.id, f"💬 Contact Support here: {SUPPORT_BOT}", reply_markup=get_main_keyboard())
         
-    elif call.data == "main_menu":
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("👤 My Account", callback_data="my_account"),
-            InlineKeyboardButton("➕ Add Account", callback_data="add_account")
-        )
-        markup.add(
-            InlineKeyboardButton("💰 Balance & Refer", callback_data="balance_menu"),
-            InlineKeyboardButton("💬 Support", url=SUPPORT_BOT)
-        )
-        markup.add(
-            InlineKeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
-        )
-        bot.edit_message_text("⚡ **Swiggy Cyber Automation Panel**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
+    elif text == "🚀 Open Swiggy Mini Web":
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
+        bot.send_message(message.chat.id, "Click below to open the Mini App:", reply_markup=markup)
+        
     conn.close()
 
 def save_account_step(message):
@@ -203,7 +191,14 @@ def save_account_step(message):
     cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
     conn.commit()
     conn.close()
-    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!** Open the Mini Web to start using it.")
+    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!** Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
+
+# --- Callback Handler for Inline Buttons (Like Add Money) ---
+@bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
+def callback_add_money(call):
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, "💳 Please enter the amount you want to add (Minimum **₹10**):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_amount_step)
 
 # --- Process Amount & Send QR Code Image ---
 def process_amount_step(message):
@@ -226,7 +221,6 @@ def process_amount_step(message):
         
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ Submit UPI Reference / Paid", callback_data=f"submit_upi_{tx_id}_{amount}"))
-        markup.add(InlineKeyboardButton("« Cancel", callback_data="balance_menu"))
         
         bot.send_photo(
             message.chat.id,
