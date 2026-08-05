@@ -4,29 +4,12 @@ import json
 import sqlite3
 import random
 import string
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, BotCommand
 import firebase_admin
 from firebase_admin import credentials, firestore
 import qrcode
 from io import BytesIO
-
-# --- Dummy HTTP Server for Render Web Service Port Binding ---
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running successfully!")
-
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
-
-# Start dummy server in background thread so Render port check passes
-threading.Thread(target=run_server, daemon=True).start()
 
 # --- Credentials & Config ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
@@ -59,7 +42,8 @@ bot = telebot.TeleBot(BOT_TOKEN)
 try:
     bot.set_my_commands([
         BotCommand("start", "Start the Bot & Open Menu"),
-        BotCommand("admin", "Open Admin Dashboard")
+        BotCommand("admin", "Open Admin Dashboard"),
+        BotCommand("cancel", "Cancel Ongoing Action")
     ])
 except Exception as e:
     print(f"Menu commands error: {e}")
@@ -270,6 +254,13 @@ def admin_panel(message):
         parse_mode="Markdown"
     )
 
+@bot.message_handler(commands=['cancel'])
+def cancel_command(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    # Clear next step handlers by sending message with standard keyboard
+    bot.send_message(message.chat.id, "❌ Current action has been cancelled.", reply_markup=get_main_keyboard())
+
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     user_id = message.from_user.id
@@ -333,7 +324,9 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
         
     elif text == "💬 Support":
-        bot.send_message(message.chat.id, f"💬 Contact Support here: {SUPPORT_BOT}", reply_markup=get_main_keyboard())
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("💬 Open Support", url=SUPPORT_BOT))
+        bot.send_message(message.chat.id, "Click below to contact support:", reply_markup=markup)
         
     elif text == "🚀 Open Swiggy Mini Web":
         markup = InlineKeyboardMarkup()
@@ -419,8 +412,17 @@ def admin_actions(call):
     data = call.data
     
     if data == "admin_broadcast":
-        msg = bot.send_message(call.message.chat.id, "📢 Send the message, photo or sticker you want to broadcast to all users:")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("❌ Cancel Broadcast", callback_data="admin_cancel_broadcast"))
+        msg = bot.send_message(call.message.chat.id, "📢 Send the message, photo or sticker you want to broadcast to all users:\n\n*(Ya cancel karne ke liye niche button dabayein ya /cancel bhejein)*", reply_markup=markup)
         bot.register_next_step_handler(msg, execute_broadcast)
+        
+    elif data == "admin_cancel_broadcast":
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        bot.send_message(call.message.chat.id, "❌ Broadcast has been cancelled.")
         
     elif data == "admin_user_list":
         conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
@@ -478,6 +480,11 @@ def admin_actions(call):
         conn.close()
 
 def execute_broadcast(message):
+    # Check if user sent /cancel command text
+    if message.text and message.text.strip().lower() == "/cancel":
+        bot.send_message(message.chat.id, "❌ Broadcast has been cancelled.")
+        return
+
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
@@ -520,15 +527,15 @@ def execute_block(message):
 def execute_unblock(message):
     query = message.text.strip().replace("@", "")
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
+    db_cursor = conn.cursor()
     
     if query.isdigit():
-        cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (int(query),))
+        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (int(query),))
     else:
-        cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
+        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
         
     conn.commit()
-    affected = cursor.rowcount
+    affected = db_cursor.rowcount
     conn.close()
     
     if affected > 0:
