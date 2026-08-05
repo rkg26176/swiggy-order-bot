@@ -1,290 +1,294 @@
-import os
-import json
-import logging
-from flask import Flask, render_template_string, jsonify, request
-import firebase_admin
-from firebase_admin import credentials, firestore
+import sqlite3
+import random
+import string
 import telebot
-from telebot import types
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# --- Credentials & Config ---
+BOT_TOKEN = "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw"
+ADMIN_ID = 8053042225
+UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
+SUPPORT_BOT = "https://t.me/gbx_support_bot"
+MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
 
-# Environment Variables & Admin ID
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "8053042225"))
-BOT_TOKEN = "8813624728:AAF5v_Rnq3R4LYNP1_Sd_tBQU6TxomBDwK4"
-
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
-
-# Initialize Flask for Webhook & Mini Web Dashboard
-app_flask = Flask(__name__)
-
-@app_flask.route('/')
-def mini_web_home():
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Swiggy Order Bot - Mini Web</title>
-        <style>
-            body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-            .container { background: #1e1e1e; padding: 20px; border-radius: 10px; max-width: 600px; margin: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.6); }
-            h1 { color: #ff5722; font-size: 20px; }
-            .card { background: #2a2a2a; padding: 12px; margin: 10px 0; border-radius: 8px; text-align: left; font-size: 14px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🍔 Swiggy Order Bot Mini Web Dashboard</h1>
-            <p>Live Account & Balance Connected Panel</p>
-            <div id="live-data" class="card">
-                <p>Loading database records...</p>
-            </div>
-        </div>
-        <script>
-            async function fetchLiveData() {
-                try {
-                    let res = await fetch('/get_live_state');
-                    let data = await res.json();
-                    let html = "<h3>📊 User Accounts & Balances:</h3>";
-                    if(data.users && data.users.length > 0) {
-                        data.users.forEach(u => {
-                            html += `<div style="border-bottom: 1px solid #444; padding: 8px 0;">
-                                <b>User ID:</b> ${u.id} <br>
-                                <b>Current Balance:</b> ₹${u.id_balance || 0} <br>
-                                <b>Linked Accounts:</b> ${u.accounts ? u.accounts.length : 0}
-                            </div>`;
-                        });
-                    } else {
-                        html += "<p>No users found yet.</p>";
-                    }
-                    document.getElementById('live-data').innerHTML = html;
-                } catch(e) { console.log(e); }
-            }
-            setInterval(fetchLiveData, 5000);
-            fetchLiveData();
-        </script>
-    </body>
-    </html>
-    """)
-
-@app_flask.route('/get_live_state')
-def get_live_state():
-    users_data = []
-    if db:
-        try:
-            docs = db.collection("users").stream()
-            for doc in docs:
-                u_dict = doc.to_dict()
-                u_dict['id'] = doc.id
-                users_data.append(u_dict)
-        except Exception as e:
-            logger.error(f"Web sync error: {e}")
-    return jsonify({"users": users_data})
-
-# Telegram Webhook Route
-@app_flask.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        return 'Forbidden', 403
-
-# Initialize Firebase
-try:
-    firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
-    if firebase_creds_json:
-        cred_dict = json.loads(firebase_creds_json)
-        cred = credentials.Certificate(cred_dict)
-    else:
-        cred = credentials.Certificate("firebase_key.json")
-    
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    logger.info("Firebase connected successfully!")
-except Exception as e:
-    logger.error(f"Firebase initialization failed: {e}")
-    db = None
-
-# Channels & Group Dictionary
+# Required Channels & Group Chats Dictionary
 CHANNELS = {
     "-1003332858806": {"name": "📢 GBX LOOT 1", "url": "https://t.me/+6ByfGDRBKgsxMjZl"},
     "-1003630519339": {"name": "📢 GBX EARN 2", "url": "https://t.me/+OWrCoeF-JutmNjg1"},
     "-1003862251237": {"name": "💬 GBX GC 1", "url": "https://t.me/+O_-kEF2f5f1kMjdl"},
-    "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"},
+    "-1003197501531": {"name": "💬 GBX GC 2", "url": "https://t.me/+f2mWfDs6EUIxYTBl"}
 }
 
-def get_unjoined_channels(user_id):
-    unjoined = {}
-    for chat_id, info in CHANNELS.items():
-        try:
-            member = bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
-            if member.status in ['left', 'kicked']:
-                unjoined[chat_id] = info
-        except Exception:
-            pass
-    return unjoined
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def get_user_data(user_id):
-    if not db:
-        return {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
-    try:
-        doc_ref = db.collection("users").document(str(user_id))
-        doc = doc_ref.get()
-        if doc.exists:
-            data = doc.to_dict()
-            if "used_utrs" not in data:
-                data["used_utrs"] = []
-            return data
-        else:
-            default_data = {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
-            doc_ref.set(default_data)
-            return default_data
-    except Exception as e:
-        logger.error(f"Error fetching user data: {e}")
-        return {"id_balance": 100.0, "ref_balance": 0.0, "accounts": [], "used_utrs": []}
-
-def update_user_data(user_id, data):
-    if db:
-        try:
-            db.collection("users").document(str(user_id)).set(data, merge=True)
-        except Exception as e:
-            logger.error(f"Error updating user data: {e}")
-
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    user_id = message.from_user.id
-    logger.info(f"Received /start from user: {user_id}")
+# --- Database Setup ---
+def init_db():
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
     
-    if db:
-        try:
-            db.collection("all_users").document(str(user_id)).set({"user_id": user_id, "username": message.from_user.username or "None"})
-        except Exception as e:
-            logger.error(f"Error saving all_users: {e}")
+    # Users Table
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        user_id INTEGER PRIMARY KEY,
+                        balance REAL DEFAULT 0.0,
+                        referrals INTEGER DEFAULT 0,
+                        referred_by INTEGER,
+                        ref_code TEXT
+                    )''')
+    
+    # Accounts Table (Auth Tokens)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER,
+                        account_name TEXT,
+                        auth_token TEXT
+                    )''')
+    
+    # Transactions Table (Add Money)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (
+                        tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER,
+                        amount REAL,
+                        status TEXT DEFAULT 'pending'
+                    )''')
+    
+    conn.commit()
+    conn.close()
 
-    unjoined = get_unjoined_channels(user_id)
-    if unjoined:
-        keyboard = types.InlineKeyboardMarkup()
-        for chat_id, info in unjoined.items():
-            keyboard.add(types.InlineKeyboardButton(text=info["name"], url=info["url"]))
-        keyboard.add(types.InlineKeyboardButton(text="🔄 Verify Joined Status", callback_data="check_join"))
+init_db()
+
+# Helper: Generate Ref Code
+def generate_ref_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+# --- Check Force Subscription ---
+def check_subscription(user_id):
+    for channel_id in CHANNELS:
+        try:
+            member = bot.get_chat_member(channel_id, user_id)
+            if member.status not in ['member', 'administrator', 'creator']:
+                return False
+        except Exception:
+            # If bot is not admin in channel, skip or handle gracefully
+            pass
+    return True
+
+# --- Handlers: Start & Main Menu ---
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user_id = message.from_user.id
+    
+    # Optional: Force Join Check can be added here if needed
+    args = message.text.split()
+    
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    if not user:
+        ref_code = generate_ref_code()
+        referred_by = None
+        if len(args) > 1 and args[1].isdigit():
+            ref_id = int(args[1])
+            if ref_id != user_id:
+                cursor.execute("SELECT * FROM users WHERE user_id = ?", (ref_id,))
+                if cursor.fetchone():
+                    referred_by = ref_id
+                    # Add ₹3 referral bonus per successful referral
+                    cursor.execute("UPDATE users SET referrals = referrals + 1, balance = balance + 3.0 WHERE user_id = ?", (ref_id,))
+        
+        cursor.execute("INSERT INTO users (user_id, balance, referrals, referred_by, ref_code) VALUES (?, 0.0, 0, ?, ?)", 
+                       (user_id, referred_by, ref_code))
+        conn.commit()
+    
+    conn.close()
+    
+    # Main Keyboard Layout (5 Buttons as requested)
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("👤 My Account", callback_data="my_account"),
+        InlineKeyboardButton("➕ Add Account", callback_data="add_account")
+    )
+    markup.add(
+        InlineKeyboardButton("💰 Balance & Refer", callback_data="balance_menu"),
+        InlineKeyboardButton("💬 Support", url=SUPPORT_BOT)
+    )
+    markup.add(
+        InlineKeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
+    )
+    
+    bot.send_message(
+        message.chat.id, 
+        "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\n"
+        "Manage your accounts, check your live balance, and launch the mini app securely below:", 
+        reply_markup=markup, 
+        parse_mode="Markdown"
+    )
+
+# --- Callbacks Handler ---
+@bot.callback_query_handler(func=lambda call: call.data in ["my_account", "add_account", "balance_menu", "add_money", "main_menu"])
+def handle_callbacks(call):
+    user_id = call.from_user.id
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    if call.data == "my_account":
+        cursor.execute("SELECT account_name FROM accounts WHERE user_id = ?", (user_id,))
+        accounts = cursor.fetchall()
+        
+        if not accounts:
+            bot.answer_callback_query(call.id, "No accounts added yet!")
+            bot.send_message(call.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.")
+        else:
+            acc_list = "\n".join([f"🔹 {acc[0]}" for acc in accounts])
+            bot.send_message(call.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them instantly.*", parse_mode="Markdown")
+            
+    elif call.data == "add_account":
+        msg = bot.send_message(call.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
+        bot.register_next_step_handler(msg, save_account_step)
+        
+    elif call.data == "balance_menu":
+        cursor.execute("SELECT balance, referrals, ref_code FROM users WHERE user_id = ?", (user_id,))
+        user_data = cursor.fetchone()
+        balance, referrals, ref_code = user_data[0], user_data[1], user_data[2]
+        
+        ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
+        
+        text = (
+            f"💰 **Your Wallet & Referral Details**\n\n"
+            f"• **Total Balance:** ₹{balance}\n"
+            f"• **Total Referrals:** {referrals} (Earned ₹{referrals * 3})\n\n"
+            f"🔗 **Your Referral Link:**\n`{ref_link}`\n\n"
+            f"*(Note: ₹3 added automatically per successful referral)*"
+        )
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("➕ Add Money (Min ₹10)", callback_data="add_money"))
+        markup.add(InlineKeyboardButton("« Back to Menu", callback_data="main_menu"))
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        
+    elif call.data == "add_money":
+        msg = bot.send_message(call.id, "💳 Please enter the amount you want to add (Minimum **₹10**):")
+        bot.register_next_step_handler(msg, process_amount_step)
+        
+    elif call.data == "main_menu":
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("👤 My Account", callback_data="my_account"),
+            InlineKeyboardButton("➕ Add Account", callback_data="add_account")
+        )
+        markup.add(
+            InlineKeyboardButton("💰 Balance & Refer", callback_data="balance_menu"),
+            InlineKeyboardButton("💬 Support", url=SUPPORT_BOT)
+        )
+        markup.add(
+            InlineKeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
+        )
+        bot.edit_message_text("⚡ **Swiggy Cyber Automation Panel**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+    conn.close()
+
+# --- Save Account Step ---
+def save_account_step(message):
+    user_id = message.from_user.id
+    token_or_number = message.text.strip()
+    
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    acc_name = f"Account_{random.randint(1000, 9999)}"
+    cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
+    conn.commit()
+    conn.close()
+    
+    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!**\n\nYour session has been securely mapped. Open the Mini Web to start using it.")
+
+# --- Add Money Workflow ---
+def process_amount_step(message):
+    user_id = message.from_user.id
+    try:
+        amount = float(message.text.strip())
+        if amount < 10:
+            bot.send_message(message.chat.id, "❌ Minimum amount is ₹10. Please try again.")
+            return
+            
+        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO transactions (user_id, amount, status) VALUES (?, ?, 'pending')", (user_id, amount))
+        tx_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("✅ Submit UPI Reference / Paid", callback_data=f"submit_upi_{tx_id}_{amount}"))
+        markup.add(InlineKeyboardButton("« Cancel", callback_data="balance_menu"))
         
         bot.send_message(
-            user_id,
-            "❌ **Access Denied!**\nYou must join all the required channels and group chats below to use this bot:",
-            reply_markup=keyboard
+            message.chat.id, 
+            f"📲 **Scan / Pay to UPI:**\n`{UPI_ID}`\n\nAmount: **₹{amount}**\n\nAfter payment, click submit below:", 
+            reply_markup=markup, 
+            parse_mode="Markdown"
         )
-        return
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid amount. Please enter numbers only.")
 
-    user_data = get_user_data(user_id)
-    try:
-        ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
-    except Exception:
-        ref_link = f"https://t.me/swiggy_order_bot?start=ref_{user_id}"
-
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton(text="💰 Balance", callback_data="menu_balance"),
-        types.InlineKeyboardButton(text="👤 Add Account", callback_data="menu_add_account"),
-        types.InlineKeyboardButton(text="📂 Accounts", callback_data="menu_my_accounts"),
-        types.InlineKeyboardButton(text="💬 Support", url="https://t.me/YourSupportBotLink"),
-        types.InlineKeyboardButton(text="🌐 Mini Web", url="https://swiggy-order-bot.onrender.com")
-    )
-
-    text = (
-        "🤖 **Swiggy Bot Dashboard**\n\n"
-        f"💳 **Current Balance:** ₹{user_data.get('id_balance', 100.0)}\n"
-        f"👥 **Referral Link:** `{ref_link}`\n\n"
-        "Select an option below:"
-    )
-    bot.send_message(user_id, text, reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("submit_upi_"))
+def handle_upi_submit(call):
+    data_parts = call.data.split("_")
+    tx_id, amount = data_parts[2], data_parts[3]
     user_id = call.from_user.id
-    data = call.data
-
-    if data == "check_join":
-        unjoined = get_unjoined_channels(user_id)
-        if not unjoined:
-            try:
-                bot.delete_message(call.message.chat.id, call.message.message_id)
-            except Exception:
-                pass
-            start_command(call.message)
-        else:
-            bot.answer_callback_query(call.id, "❌ You still haven't joined all chats!", show_alert=True)
-
-    elif data == "menu_balance":
-        user_data = get_user_data(user_id)
-        try:
-            ref_link = f"https://t.me/{bot.get_me().username}?start=ref_{user_id}"
-        except Exception:
-            ref_link = f"https://t.me/swiggy_order_bot?start=ref_{user_id}"
-        text = (
-            f"💰 **Wallet Overview**\n\n"
-            f"💳 **Current Balance:** ₹{user_data.get('id_balance', 0)}\n"
-            f"👥 **Referral Link:** `{ref_link}`\n\n"
-            f"📥 **To add balance, please send the exact amount you want to deposit (e.g. `500`):**"
-        )
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
-
-    elif data == "menu_add_account":
-        text = (
-            "👤 **Add Account System**\n\n"
-            "Please send either your **JSON Session Token** OR your **Phone Number** to link with your account:"
-        )
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
-
-    elif data == "menu_my_accounts":
-        user_data = get_user_data(user_id)
-        accounts = user_data.get("accounts", [])
-        kb = types.InlineKeyboardMarkup()
-        if not accounts:
-            text = "📂 No active accounts found. Please add an account first."
-        else:
-            text = "📂 **Your Logged-in Accounts:**\nSelect an account to manage/export:"
-            for idx, acc in enumerate(accounts):
-                kb.add(types.InlineKeyboardButton(text=f"Account {idx+1}", callback_data=f"manage_acc_{idx}"))
-        kb.add(types.InlineKeyboardButton(text="🔙 Back", callback_data="back_home"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
-
-    elif data == "back_home":
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
-        start_command(call.message)
-
-@bot.message_handler(commands=['admin'])
-def admin_command(message):
-    if message.from_user.id != ADMIN_CHAT_ID:
-        bot.reply_to(message, "❌ यह कमांड सिर्फ एडमिन के लिए है।")
-        return
-    kb = types.InlineKeyboardMarkup()
-    kb.add(
-        types.InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton(text="👥 User List", callback_data="admin_users_0")
+    
+    bot.edit_message_text("⏳ Your payment details have been submitted. **Verifying by Admin...**", call.message.chat.id, call.message.message_id)
+    
+    # Notify Admin
+    admin_markup = InlineKeyboardMarkup()
+    admin_markup.add(
+        InlineKeyboardButton("✅ Accept", callback_data=f"admin_accept_{tx_id}_{user_id}_{amount}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{tx_id}")
     )
-    bot.send_message(message.chat.id, "⚙️ **Admin Control Panel**", reply_markup=kb)
+    
+    bot.send_message(
+        ADMIN_ID, 
+        f"🔔 **New Deposit Request!**\n\n• User ID: `{user_id}`\n• Amount: `₹{amount}`\n• Tx ID: `{tx_id}`", 
+        reply_markup=admin_markup, 
+        parse_mode="Markdown"
+    )
+
+# --- Admin Accept / Reject Handlers ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
+def admin_action(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "Unauthorized!")
+        return
+        
+    data = call.data.split("_")
+    action = data[1]
+    tx_id = data[2]
+    
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    if action == "accept":
+        user_id = int(data[3])
+        amount = float(data[4])
+        
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        cursor.execute("UPDATE transactions SET status = 'accepted' WHERE tx_id = ?", (tx_id,))
+        conn.commit()
+        
+        bot.send_message(user_id, f"🎉 **Payment Approved!** ₹{amount} has been added to your wallet balance.")
+        bot.edit_message_text(f"✅ Accepted Deposit of ₹{amount} for User `{user_id}`", call.message.chat.id, call.message.message_id)
+        
+    elif action == "reject":
+        cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
+        conn.commit()
+        bot.edit_message_text(f"❌ Deposit Request Rejected.", call.message.chat.id, call.message.message_id)
+        
+    conn.close()
 
 if __name__ == "__main__":
-    RENDER_URL = "https://swiggy-order-bot.onrender.com"
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{RENDER_URL}/webhook/{BOT_TOKEN}")
-    logger.info(f"Webhook successfully set to {RENDER_URL}/webhook/{BOT_TOKEN}")
-
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
-    
+    print("Swiggy Automation Bot is running live...")
+    bot.infinity_polling()
