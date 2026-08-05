@@ -1,7 +1,6 @@
 import io
 import os
 import json
-import sqlite3
 import random
 import string
 import telebot
@@ -26,7 +25,7 @@ CHANNELS = {
     "-1003197501531": {"name": "💬 GBX ZONE", "url": "https://t.me/+f2mWfDs6EUIxYTBl"}
 }
 
-# Firebase Setup
+# Firebase Setup (Cloud Database for 100% Data Persistence)
 firebase_json_str = os.environ.get('FIREBASE_CREDENTIALS')
 if firebase_json_str:
     firebase_config = json.loads(firebase_json_str)
@@ -34,7 +33,7 @@ if firebase_json_str:
     firebase_admin.initialize_app(cred)
     db = firestore.client()
 else:
-    db = None
+    raise ValueError("❌ FIREBASE_CREDENTIALS environment variable is missing or invalid!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -46,40 +45,6 @@ try:
     ])
 except Exception as e:
     print(f"Menu commands error: {e}")
-
-# --- Database Setup ---
-def init_db():
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        user_id INTEGER PRIMARY KEY,
-                        username TEXT,
-                        balance REAL DEFAULT 0.0,
-                        referrals INTEGER DEFAULT 0,
-                        referred_by INTEGER,
-                        ref_code TEXT,
-                        is_blocked INTEGER DEFAULT 0
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        account_name TEXT,
-                        auth_token TEXT
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (
-                        tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        amount REAL,
-                        utr TEXT,
-                        status TEXT DEFAULT 'pending'
-                    )''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS used_utrs (
-                        utr TEXT PRIMARY KEY
-                    )''')
-    conn.commit()
-    conn.close()
-
-init_db()
 
 def generate_ref_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -157,41 +122,44 @@ def send_welcome(message):
     username = message.from_user.username or "No Username"
     args = message.text.split()
     
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
+    user_ref = db.collection('users').document(str(user_id))
+    user_doc = user_ref.get()
     
-    if res and res[0] == 1:
-        conn.close()
-        bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
-        return
+    if user_doc.exists:
+        user_data = user_doc.to_dict()
+        if user_data.get('is_blocked', 0) == 1:
+            bot.send_message(message.chat.ID, "❌ You are blocked from using this bot.")
+            return
 
     if not send_force_sub_prompt(message.chat.id, user_id):
-        conn.close()
         return
 
-    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    
-    if not user:
+    if not user_doc.exists:
         ref_code = generate_ref_code()
         referred_by = None
         if len(args) > 1 and args[1].isdigit():
             ref_id = int(args[1])
             if ref_id != user_id:
-                cursor.execute("SELECT * FROM users WHERE user_id = ?", (ref_id,))
-                if cursor.fetchone():
+                ref_ref = db.collection('users').document(str(ref_id))
+                ref_doc = ref_ref.get()
+                if ref_doc.exists:
                     referred_by = ref_id
-                    cursor.execute("UPDATE users SET referrals = referrals + 1, balance = balance + 3.0 WHERE user_id = ?", (ref_id,))
+                    ref_data = ref_doc.to_dict()
+                    new_ref_count = ref_data.get('referrals', 0) + 1
+                    new_bal = ref_data.get('balance', 0.0) + 3.0
+                    ref_ref.update({'referrals': new_ref_count, 'balance': new_bal})
         
-        cursor.execute("INSERT INTO users (user_id, username, balance, referrals, referred_by, ref_code, is_blocked) VALUES (?, ?, 0.0, 0, ?, ?, 0)", 
-                       (user_id, username, referred_by, ref_code))
-        conn.commit()
+        user_ref.set({
+            'user_id': user_id,
+            'username': username,
+            'balance': 0.0,
+            'referrals': 0,
+            'referred_by': referred_by,
+            'ref_code': ref_code,
+            'is_blocked': 0
+        })
     else:
-        cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
-        conn.commit()
-    conn.close()
+        user_ref.update({'username': username})
     
     bot.send_message(
         message.chat.id, 
@@ -283,20 +251,18 @@ def handle_text_messages(message):
         )
         return
 
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    if res and res[0] == 1:
-        conn.close()
+    user_ref = db.collection('users').document(str(user_id))
+    user_doc = user_ref.get()
+    if user_doc.exists and user_doc.to_dict().get('is_blocked', 0) == 1:
         bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
         return
 
     text = message.text
     
     if text == "👤 My Account":
-        cursor.execute("SELECT id, account_name, auth_token FROM accounts WHERE user_id = ?", (user_id,))
-        accounts = cursor.fetchall()
+        accounts_ref = db.collection('accounts').where('user_id', '==', user_id).stream()
+        accounts = [(acc.id, acc.to_dict().get('account_name')) for acc in accounts_ref]
+        
         if not accounts:
             bot.send_message(
                 message.chat.id, 
@@ -305,8 +271,7 @@ def handle_text_messages(message):
             )
         else:
             markup = InlineKeyboardMarkup(row_width=2)
-            for acc in accounts:
-                acc_id, acc_name, _ = acc
+            for acc_id, acc_name in accounts:
                 markup.add(
                     InlineKeyboardButton(f"📱 {acc_name}", callback_data=f"sel_acc_{acc_id}"),
                     InlineKeyboardButton("📤 Export Auth", callback_data=f"export_auth_{acc_id}")
@@ -322,9 +287,9 @@ def handle_text_messages(message):
         bot.register_next_step_handler(msg, save_account_step)
         
     elif text == "💰 Balance & Refer":
-        cursor.execute("SELECT balance, referrals, ref_code FROM users WHERE user_id = ?", (user_id,))
-        user_data = cursor.fetchone()
-        balance, referrals, ref_code = user_data[0], user_data[1], user_data[2]
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        balance = user_data.get('balance', 0.0)
+        referrals = user_data.get('referrals', 0)
         ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
         
         resp_text = (
@@ -344,27 +309,21 @@ def handle_text_messages(message):
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
         bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
-        
-    conn.close()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sel_acc_") or call.data.startswith("export_auth_"))
 def handle_account_actions(call):
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    
     parts = call.data.split("_")
     action = parts[0] + "_" + parts[1]
     acc_id = parts[2]
     
-    cursor.execute("SELECT account_name, auth_token FROM accounts WHERE id = ?", (acc_id,))
-    acc = cursor.fetchone()
-    conn.close()
-    
-    if not acc:
+    acc_doc = db.collection('accounts').document(acc_id).get()
+    if not acc_doc.exists:
         bot.answer_callback_query(call.id, "❌ Account not found!")
         return
         
-    acc_name, auth_token = acc
+    acc_data = acc_doc.to_dict()
+    acc_name = acc_data.get('account_name')
+    auth_token = acc_data.get('auth_token')
     
     if action == "export_auth_":
         bot.answer_callback_query(call.id, "📤 Exporting Auth Token...")
@@ -389,8 +348,6 @@ def handle_account_actions(call):
 def save_account_step(message):
     user_id = message.from_user.id
     token_or_number = message.text.strip()
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
     acc_name = f"Acc_{random.randint(1000, 9999)}"
     
     try:
@@ -403,9 +360,11 @@ def save_account_step(message):
     except Exception:
         pass
 
-    cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
-    conn.commit()
-    conn.close()
+    db.collection('accounts').add({
+        'user_id': user_id,
+        'account_name': acc_name,
+        'auth_token': token_or_number
+    })
     bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Successfully Linked! Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
@@ -422,17 +381,18 @@ def process_amount_step(message):
             bot.send_message(message.chat.id, "❌ Minimum amount is ₹10. Please try again.")
             return
             
-        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO transactions (user_id, amount, status) VALUES (?, ?, 'pending')", (user_id, amount))
-        tx_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        tx_ref = db.collection('transactions').document()
+        tx_ref.set({
+            'tx_id': tx_ref.id,
+            'user_id': user_id,
+            'amount': amount,
+            'status': 'pending'
+        })
         
         qr_bio = generate_upi_qr(UPI_ID, amount)
         
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("✅ Submit UPI Reference / Paid", callback_data=f"submit_upi_{tx_id}_{amount}"))
+        markup.add(InlineKeyboardButton("✅ Submit UPI Reference / Paid", callback_data=f"submit_upi_{tx_ref.id}_{amount}"))
         
         bot.send_photo(
             message.chat.id,
@@ -462,27 +422,21 @@ def process_utr_step(message, tx_id, amount):
         bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
         return
 
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM used_utrs WHERE utr = ?", (utr,))
-    if cursor.fetchone():
-        conn.close()
+    utr_ref = db.collection('used_utrs').document(utr)
+    if utr_ref.get().exists:
         bot.send_message(message.chat.id, "❌ **This UTR has already been used!** Each UTR can only be used once.", parse_mode="Markdown", reply_markup=get_main_keyboard())
         return
 
-    cursor.execute("INSERT OR IGNORE INTO used_utrs (utr) VALUES (?)", (utr,))
-    cursor.execute("UPDATE transactions SET utr = ?, status = 'pending' WHERE tx_id = ?", (utr, tx_id))
+    utr_ref.set({'used': True})
     
-    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
-    user_res = cursor.fetchone()
-    username = f"@{user_res[0]}" if user_res and user_res[0] != "No Username" else "No Username"
+    tx_doc_ref = db.collection('transactions').document(tx_id)
+    tx_doc_ref.update({'utr': utr, 'status': 'pending'})
     
-    cursor.execute("SELECT COUNT(*) FROM transactions WHERE user_id = ?", (user_id,))
-    tx_count = cursor.fetchone()[0]
+    user_doc = db.collection('users').document(str(user_id)).get()
+    username = f"@{user_doc.to_dict().get('username')}" if user_doc.exists and user_doc.to_dict().get('username') != "No Username" else "No Username"
     
-    conn.commit()
-    conn.close()
+    tx_count_query = db.collection('transactions').where('user_id', '==', user_id).stream()
+    tx_count = sum(1 for _ in tx_count_query)
     
     bot.send_message(message.chat.id, "⏳ Your UTR has been submitted. **Verifying by Admin...**", parse_mode="Markdown", reply_markup=get_main_keyboard())
     
@@ -527,26 +481,21 @@ def admin_actions(call):
         bot.send_message(call.message.chat.id, "❌ Broadcast has been cancelled.")
         
     elif data == "admin_user_list":
-        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username FROM users WHERE is_blocked = 0")
-        users = cursor.fetchall()
-        conn.close()
-        
-        if not users:
-            bot.send_message(call.message.chat.id, "❌ No active users found.")
-            return
-            
+        users_ref = db.collection('users').where('is_blocked', '==', 0).stream()
         user_list_text = "📋 **Active Users List:**\n\n"
-        for u in users:
-            uname = f"@{u[1]}" if u[1] != "No Username" else "No Username"
-            user_list_text += f"• ID: `{u[0]}` | {uname}\n"
-            
+        count = 0
+        for u in users_ref:
+            udata = u.to_dict()
+            uname = f"@{udata.get('username')}" if udata.get('username') != "No Username" else "No Username"
+            user_list_text += f"• ID: `{udata.get('user_id')}` | {uname}\n"
+            count += 1
             if len(user_list_text) > 3500:
                 bot.send_message(call.message.chat.id, user_list_text, parse_mode="Markdown")
                 user_list_text = ""
                 
-        if user_list_text:
+        if count == 0:
+            bot.send_message(call.message.chat.id, "❌ No active users found.")
+        elif user_list_text:
             bot.send_message(call.message.chat.id, user_list_text, parse_mode="Markdown")
             
     elif data == "admin_block":
@@ -562,23 +511,24 @@ def admin_actions(call):
         action = parts[1]
         tx_id = parts[2]
         
-        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-        cursor = conn.cursor()
-        
         if action == "accept":
             user_id = int(parts[3])
             amount = float(parts[4])
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-            cursor.execute("UPDATE transactions SET status = 'accepted' WHERE tx_id = ?", (tx_id,))
-            conn.commit()
+            
+            user_ref = db.collection('users').document(str(user_id))
+            udoc = user_ref.get()
+            if udoc.exists:
+                current_bal = udoc.to_dict().get('balance', 0.0)
+                user_ref.update({'balance': current_bal + amount})
+                
+            db.collection('transactions').document(tx_id).update({'status': 'accepted'})
             
             bot.send_message(user_id, f"🎉 **Payment Approved!** ₹{amount} has been added to your wallet balance.")
             bot.edit_message_text(f"✅ Accepted Deposit of ₹{amount} for User `{user_id}`", call.message.chat.id, call.message.message_id)
             
         elif action == "reject":
             user_id = int(parts[3])
-            cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
-            conn.commit()
+            db.collection('transactions').document(tx_id).update({'status': 'rejected'})
             
             reject_markup = InlineKeyboardMarkup()
             reject_markup.add(InlineKeyboardButton("💬 Open Support", url=SUPPORT_BOT))
@@ -589,23 +539,17 @@ def admin_actions(call):
                 parse_mode="Markdown"
             )
             bot.edit_message_text(f"❌ Deposit Request Rejected.", call.message.chat.id, call.message.message_id)
-        conn.close()
 
 def execute_broadcast(message):
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
-    users = cursor.fetchall()
-    conn.close()
-    
+    users_ref = db.collection('users').where('is_blocked', '==', 0).stream()
     success = 0
     failed = 0
     
     status_msg = bot.send_message(message.chat.id, "📢 Broadcasting message to all active users...")
     
-    for u in users:
+    for u in users_ref:
         try:
-            bot.copy_message(chat_id=u[0], from_chat_id=message.chat.id, message_id=message.message_id)
+            bot.copy_message(chat_id=u.to_dict().get('user_id'), from_chat_id=message.chat.id, message_id=message.message_id)
             success += 1
         except Exception:
             failed += 1
@@ -614,64 +558,54 @@ def execute_broadcast(message):
 
 def execute_block(message):
     query = message.text.strip().replace("@", "")
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    cursor = conn.cursor()
-    
     target_user_id = None
+    
     if query.isdigit():
         target_user_id = int(query)
-        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (target_user_id,))
+        user_ref = db.collection('users').document(str(target_user_id))
+        if user_ref.get().exists:
+            user_ref.update({'is_blocked': 1})
     else:
-        cursor.execute("SELECT user_id FROM users WHERE username = ?", (query,))
-        res = cursor.fetchone()
-        if res:
-            target_user_id = res[0]
-            cursor.execute("UPDATE users SET is_blocked = 1 WHERE username = ?", (query,))
-        
-    conn.commit()
-    affected = cursor.rowcount
-    conn.close()
-    
-    if affected > 0:
+        users_ref = db.collection('users').where('username', '==', query).stream()
+        for u in users_ref:
+            target_user_id = u.to_dict().get('user_id')
+            db.collection('users').document(u.id).update({'is_blocked': 1})
+            break
+            
+    if target_user_id:
         bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **blocked**.", parse_mode="Markdown")
-        if target_user_id:
-            try:
-                bot.send_message(target_user_id, "❌ You have been blocked by the admin.")
-            except Exception:
-                pass
+        try:
+            bot.send_message(target_user_id, "❌ You have been blocked by the admin.")
+        except Exception:
+            pass
     else:
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 def execute_unblock(message):
     query = message.text.strip().replace("@", "")
-    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
-    db_cursor = conn.cursor()
-    
     target_user_id = None
+    
     if query.isdigit():
         target_user_id = int(query)
-        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (target_user_id,))
+        user_ref = db.collection('users').document(str(target_user_id))
+        if user_ref.get().exists:
+            user_ref.update({'is_blocked': 0})
     else:
-        db_cursor.execute("SELECT user_id FROM users WHERE username = ?", (query,))
-        res = db_cursor.fetchone()
-        if res:
-            target_user_id = res[0]
-            db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
-        
-    conn.commit()
-    affected = db_cursor.rowcount
-    cursor.close()
-    
-    if affected > 0:
+        users_ref = db.collection('users').where('username', '==', query).stream()
+        for u in users_ref:
+            target_user_id = u.to_dict().get('user_id')
+            db.collection('users').document(u.id).update({'is_blocked': 0})
+            break
+            
+    if target_user_id:
         bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **unblocked**.", parse_mode="Markdown")
-        if target_user_id:
-            try:
-                bot.send_message(target_user_id, "✅ You have been unblocked by the admin.")
-            except Exception:
-                pass
+        try:
+            bot.send_message(target_user_id, "✅ You have been unblocked by the admin.")
+        except Exception:
+            pass
     else:
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("Swiggy Automation Bot is running live...")
+    print("Swiggy Automation Bot is running live with Firebase Cloud Database...")
     bot.infinity_polling()
