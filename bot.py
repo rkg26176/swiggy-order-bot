@@ -70,7 +70,11 @@ def init_db():
                         tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER,
                         amount REAL,
+                        utr TEXT,
                         status TEXT DEFAULT 'pending'
+                    )''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS used_utrs (
+                        utr TEXT PRIMARY KEY
                     )''')
     conn.commit()
     conn.close()
@@ -362,7 +366,7 @@ def process_amount_step(message):
         bot.send_photo(
             message.chat.id,
             photo=qr_bio,
-            caption=f"📲 **Scan & Pay ₹{amount}**\n\nUPI ID: `{UPI_ID}`\n\n*After completing the payment, click the button below to submit for admin verification:*",
+            caption=f"📲 **Scan & Pay ₹{amount}**\n\nUPI ID: `{UPI_ID}`\n\n*After completing payment, click the button below to submit your UTR / Reference Number:*",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -373,22 +377,65 @@ def process_amount_step(message):
 def handle_upi_submit(call):
     data_parts = call.data.split("_")
     tx_id, amount = data_parts[2], data_parts[3]
-    user_id = call.from_user.id
     
-    bot.edit_message_caption("⏳ Your payment details have been submitted. **Verifying by Admin...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(call.message.chat.id, f"📝 Please send your 12-digit UTR / Reference Number for ₹{amount}:", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
+
+def process_utr_step(message, tx_id, amount):
+    user_id = message.from_user.id
+    utr = message.text.strip()
+    
+    if len(utr) < 6:
+        msg = bot.send_message(message.chat.id, "❌ Invalid UTR format. Please send a valid UTR / Reference Number:")
+        bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
+        return
+
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # Check if UTR is already used anywhere
+    cursor.execute("SELECT * FROM used_utrs WHERE utr = ?", (utr,))
+    if cursor.fetchone():
+        conn.close()
+        bot.send_message(message.chat.id, "❌ **This UTR has already been used!** Each UTR can only be used once.", parse_mode="Markdown", reply_markup=get_main_keyboard())
+        return
+
+    # Mark UTR as used permanently
+    cursor.execute("INSERT OR IGNORE INTO used_utrs (utr) VALUES (?)", (utr,))
+    
+    # Update transaction with UTR
+    cursor.execute("UPDATE transactions SET utr = ?, status = 'pending' WHERE tx_id = ?", (utr, tx_id))
+    
+    # Fetch user username & count total transactions for this user
+    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+    user_res = cursor.fetchone()
+    username = f"@{user_res[0]}" if user_res and user_res[0] != "No Username" else "No Username"
+    
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE user_id = ?", (user_id,))
+    tx_count = cursor.fetchone()[0]
+    
+    conn.commit()
+    conn.close()
+    
+    bot.send_message(message.chat.id, "⏳ Your UTR has been submitted. **Verifying by Admin...**", parse_mode="Markdown", reply_markup=get_main_keyboard())
     
     admin_markup = InlineKeyboardMarkup()
     admin_markup.add(
         InlineKeyboardButton("✅ Accept", callback_data=f"admin_accept_{tx_id}_{user_id}_{amount}"),
-        InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{tx_id}")
+        InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{tx_id}_{user_id}")
     )
     
-    bot.send_message(
-        ADMIN_ID, 
-        f"🔔 **New Deposit Request!**\n\n• User ID: `{user_id}`\n• Amount: `₹{amount}`\n• Tx ID: `{tx_id}`", 
-        reply_markup=admin_markup, 
-        parse_mode="Markdown"
+    admin_text = (
+        f"🔔 **New Deposit Request!**\n\n"
+        f"• User ID: `{user_id}`\n"
+        f"• Username: {username}\n"
+        f"• Amount: `₹{amount}`\n"
+        f"• UTR / Ref: `{utr}`\n"
+        f"• Tx Count: `{tx_count}`"
     )
+    
+    bot.send_message(ADMIN_ID, admin_text, reply_markup=admin_markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
 def admin_actions(call):
@@ -463,8 +510,19 @@ def admin_actions(call):
             bot.edit_message_text(f"✅ Accepted Deposit of ₹{amount} for User `{user_id}`", call.message.chat.id, call.message.message_id)
             
         elif action == "reject":
+            user_id = int(parts[3])
             cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
             conn.commit()
+            
+            # Send rejection message with support button to user
+            reject_markup = InlineKeyboardMarkup()
+            reject_markup.add(InlineKeyboardButton("💬 Open Support", url=SUPPORT_BOT))
+            bot.send_message(
+                user_id, 
+                "❌ **Your Deposit Request has been Rejected by Admin.**\n\nKripya customer care se baat karein:", 
+                reply_markup=reject_markup, 
+                parse_mode="Markdown"
+            )
             bot.edit_message_text(f"❌ Deposit Request Rejected.", call.message.chat.id, call.message.message_id)
         conn.close()
 
