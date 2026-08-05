@@ -406,9 +406,11 @@ def admin_actions(call):
         
     elif data == "admin_cancel_broadcast":
         try:
+            bot.clear_step_handler_by_chat_id(call.message.chat.id)
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
+        bot.answer_callback_query(call.id, "Broadcast cancelled successfully!")
         bot.send_message(call.message.chat.id, "❌ Broadcast has been cancelled.")
         
     elif data == "admin_user_list":
@@ -492,10 +494,16 @@ def execute_block(message):
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     
+    target_user_id = None
     if query.isdigit():
-        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (int(query),))
+        target_user_id = int(query)
+        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (target_user_id,))
     else:
-        cursor.execute("UPDATE users SET is_blocked = 1 WHERE username = ?", (query,))
+        cursor.execute("SELECT user_id FROM users WHERE username = ?", (query,))
+        res = cursor.fetchone()
+        if res:
+            target_user_id = res[0]
+            cursor.execute("UPDATE users SET is_blocked = 1 WHERE username = ?", (query,))
         
     conn.commit()
     affected = cursor.rowcount
@@ -503,6 +511,11 @@ def execute_block(message):
     
     if affected > 0:
         bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **blocked**.", parse_mode="Markdown")
+        if target_user_id:
+            try:
+                bot.send_message(target_user_id, "❌ You have been blocked by the admin.")
+            except Exception:
+                pass
     else:
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
@@ -511,10 +524,16 @@ def execute_unblock(message):
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     db_cursor = conn.cursor()
     
+    target_user_id = None
     if query.isdigit():
-        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (int(query),))
+        target_user_id = int(query)
+        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (target_user_id,))
     else:
-        db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
+        db_cursor.execute("SELECT user_id FROM users WHERE username = ?", (query,))
+        res = db_cursor.fetchone()
+        if res:
+            target_user_id = res[0]
+            db_cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
         
     conn.commit()
     affected = db_cursor.rowcount
@@ -522,6 +541,11 @@ def execute_unblock(message):
     
     if affected > 0:
         bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **unblocked**.", parse_mode="Markdown")
+        if target_user_id:
+            try:
+                bot.send_message(target_user_id, "✅ You have been unblocked by the admin.")
+            except Exception:
+                pass
     else:
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
