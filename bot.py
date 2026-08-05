@@ -107,7 +107,7 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
-# --- Main Reply Keyboard ---
+# --- Main Reply Keyboard (Four Dot / Bottom Menu) ---
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -258,7 +258,6 @@ def admin_panel(message):
 def cancel_command(message):
     if message.from_user.id != ADMIN_ID:
         return
-    # Clear next step handlers by sending message with standard keyboard
     bot.send_message(message.chat.id, "❌ Current action has been cancelled.", reply_markup=get_main_keyboard())
 
 @bot.message_handler(func=lambda message: True)
@@ -324,14 +323,16 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
         
     elif text == "💬 Support":
+        # Direct Inline Button for Support (No extra text message)
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("💬 Open Support", url=SUPPORT_BOT))
-        bot.send_message(message.chat.id, "Click below to contact support:", reply_markup=markup)
+        markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
+        bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
         
     elif text == "🚀 Open Swiggy Mini Web":
+        # Direct Inline WebApp Button for Mini Web
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
-        bot.send_message(message.chat.id, "Click below to open the Mini App:", reply_markup=markup)
+        bot.send_message(message.chat.id, "🚀 Swiggy Mini App Panel:", reply_markup=markup)
         
     conn.close()
 
@@ -480,7 +481,6 @@ def admin_actions(call):
         conn.close()
 
 def execute_broadcast(message):
-    # Check if user sent /cancel command text
     if message.text and message.text.strip().lower() == "/cancel":
         bot.send_message(message.chat.id, "❌ Broadcast has been cancelled.")
         return
