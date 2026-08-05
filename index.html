@@ -6,6 +6,9 @@
     <title>GBX SWIGGY ORDER BOT</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Firebase App & Firestore SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -21,7 +24,7 @@
             overflow-x: hidden;
         }
 
-        /* Perfect Centered Lock Screen */
+        /* Lock Screen for External Browsers */
         #lock-screen {
             display: flex;
             position: fixed;
@@ -67,7 +70,7 @@
             font-weight: bold;
         }
         
-        /* Main App Content Styling */
+        /* Main Panel Content */
         .container {
             display: none;
             max-width: 400px;
@@ -98,16 +101,30 @@
         .btn:hover {
             background-color: #e64a19;
         }
+        .json-toggle-btn {
+            background-color: #333;
+            color: #ff5722;
+            border: 1px dashed #ff5722;
+            margin-top: 15px;
+        }
+        .json-section {
+            display: none;
+            margin-top: 15px;
+            background: #2d2d2d;
+            padding: 12px;
+            border-radius: 5px;
+        }
         textarea {
             width: 100%;
-            height: 100px;
-            background: #2d2d2d;
+            height: 90px;
+            background: #1e1e1e;
             color: white;
             border: 1px solid #444;
             border-radius: 5px;
-            padding: 10px;
-            margin-top: 10px;
+            padding: 8px;
+            margin-top: 8px;
             resize: none;
+            font-size: 12px;
         }
         .account-box {
             background: #2d2d2d;
@@ -119,7 +136,7 @@
 </head>
 <body>
 
-    <!-- Lock Screen for Outside Browsers -->
+    <!-- Lock Screen -->
     <div id="lock-screen">
         <div class="lock-icon">🔒</div>
         <div class="lock-title">Open in Telegram</div>
@@ -136,53 +153,92 @@
             <p id="active-account" style="margin-top: 5px; color: #bbb;">No account selected</p>
         </div>
 
-        <div style="margin-top: 20px;">
-            <h3>🔑 Login via JSON</h3>
-            <p style="font-size: 12px; color: #aaa; margin-top: 4px;">Apna Swiggy Session JSON yahan paste karein:</p>
+        <button class="btn json-toggle-btn" onclick="toggleJsonBox()">➕ Login JSON / Add Account</button>
+        
+        <div id="json-box" class="json-section">
+            <p style="font-size: 12px; color: #ccc;">Apna Swiggy Auth Token ya JSON yahan paste karein:</p>
             <textarea id="json-input" placeholder='{"account_name": "Acc_1", "auth_token": "your_token_here"}'></textarea>
-            <button class="btn" onclick="loginWithJson()">Add & Login Account</button>
+            <button class="btn" onclick="loginWithJson()">Add Account</button>
         </div>
     </div>
 
     <script>
-        // Check Telegram WebApp environment properly
+        // Firebase Config Setup (Apna Firebase Web Config yahan daal lena agar zaroorat ho, 
+        // ya bot ke through automatic sync ke liye Firestore initialize karein)
+        const firebaseConfig = {
+            apiKey: "YOUR_FIREBASE_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID"
+        };
+        // Initialize Firebase if not already initialized
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        let telegramUserId = null;
+
+        // Check Telegram Environment & Get User ID
         window.addEventListener('DOMContentLoaded', () => {
             const tg = window.Telegram.WebApp;
             
-            // Check if opened inside Telegram (either initData exists or tg platform is available)
             if (tg && (tg.initData || tg.platform || window.location.hash.includes('tgWebAppData'))) {
                 document.getElementById('lock-screen').style.display = 'none';
                 document.getElementById('main-content').style.display = 'block';
-                try {
-                    tg.expand();
+                try { 
+                    tg.expand(); 
+                    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                        telegramUserId = tg.initDataUnsafe.user.id;
+                    }
                 } catch(e) {}
             } else {
-                // Keep lock screen open if outside Telegram
                 document.getElementById('lock-screen').style.display = 'flex';
                 document.getElementById('main-content').style.display = 'none';
             }
         });
 
-        function loginWithJson() {
+        function toggleJsonBox() {
+            const box = document.getElementById('json-box');
+            box.style.display = box.style.display === 'block' ? 'none' : 'block';
+        }
+
+        async function loginWithJson() {
             const rawData = document.getElementById('json-input').value.trim();
             if (!rawData) {
-                alert("❌ Kripya valid JSON paste karein!");
+                alert("❌ Kripya valid JSON ya token paste karein!");
                 return;
             }
 
             try {
-                const parsedData = JSON.parse(rawData);
-                const accName = parsedData.account_name || "Swiggy_User";
+                let accName = "Acc_" + Math.floor(1000 + Math.random() * 9000);
+                let authToken = rawData;
+
+                if (rawData.startsWith("{")) {
+                    const parsedData = JSON.parse(rawData);
+                    accName = parsedData.account_name || accName;
+                    authToken = parsedData.auth_token || rawData;
+                }
                 
+                // Save to Firebase Firestore so Bot can also read it instantly
+                if (telegramUserId) {
+                    await db.collection('accounts').add({
+                        user_id: Number(telegramUserId),
+                        account_name: accName,
+                        auth_token: authToken
+                    });
+                }
+
                 localStorage.setItem('active_account', accName);
-                localStorage.setItem('auth_token', parsedData.auth_token || rawData);
+                localStorage.setItem('auth_token', authToken);
 
                 document.getElementById('active-account').innerText = `Connected: ${accName}`;
-                alert(`✅ Account (${accName}) successfully loaded & connected!`);
+                alert(`✅ Account (${accName}) successfully linked & connected to Bot & Mini Web!`);
                 
                 document.getElementById('json-input').value = "";
+                document.getElementById('json-box').style.display = 'none';
             } catch (error) {
-                alert("❌ Invalid JSON format! Kripya sahi JSON data dalein.");
+                console.error(error);
+                alert("❌ Error saving account! Kripya sahi data dalein.");
             }
         }
 
