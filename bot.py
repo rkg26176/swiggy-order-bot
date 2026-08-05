@@ -5,7 +5,7 @@ import sqlite3
 import random
 import string
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, BotCommand
 import firebase_admin
 from firebase_admin import credentials, firestore
 import qrcode
@@ -30,16 +30,27 @@ else:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# Set Telegram Blue Menu Button Commands (Side Menu)
+try:
+    bot.set_my_commands([
+        BotCommand("start", "Start the Bot & Open Menu"),
+        BotCommand("admin", "Open Admin Dashboard")
+    ])
+except Exception as e:
+    print(f"Menu commands error: {e}")
+
 # --- Database Setup ---
 def init_db():
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         user_id INTEGER PRIMARY KEY,
+                        username TEXT,
                         balance REAL DEFAULT 0.0,
                         referrals INTEGER DEFAULT 0,
                         referred_by INTEGER,
-                        ref_code TEXT
+                        ref_code TEXT,
+                        is_blocked INTEGER DEFAULT 0
                     )''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +93,7 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
-# --- Main Reply Keyboard (नीचे चार डॉट / मेनू वाला कीबोर्ड) ---
+# --- Main Reply Keyboard ---
 def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -101,10 +112,19 @@ def get_main_keyboard():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
+    username = message.from_user.username or "No Username"
     args = message.text.split()
     
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
+    cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    
+    if res and res[0] == 1:
+        conn.close()
+        bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
+        return
+
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
     
@@ -119,8 +139,11 @@ def send_welcome(message):
                     referred_by = ref_id
                     cursor.execute("UPDATE users SET referrals = referrals + 1, balance = balance + 3.0 WHERE user_id = ?", (ref_id,))
         
-        cursor.execute("INSERT INTO users (user_id, balance, referrals, referred_by, ref_code) VALUES (?, 0.0, 0, ?, ?)", 
-                       (user_id, referred_by, ref_code))
+        cursor.execute("INSERT INTO users (user_id, username, balance, referrals, referred_by, ref_code, is_blocked) VALUES (?, ?, 0.0, 0, ?, ?, 0)", 
+                       (user_id, username, referred_by, ref_code))
+        conn.commit()
+    else:
+        cursor.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
         conn.commit()
     conn.close()
     
@@ -131,12 +154,47 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
+# --- Admin Panel Command ---
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ यह कमांड सिर्फ एडमिन के लिए है।")
+        return
+        
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
+        InlineKeyboardButton("📋 Active User List", callback_data="admin_user_list")
+    )
+    markup.add(
+        InlineKeyboardButton("🚫 Block User", callback_data="admin_block"),
+        InlineKeyboardButton("🟢 Unblock User", callback_data="admin_unblock")
+    )
+    
+    bot.send_message(
+        message.chat.id, 
+        "👑 **Welcome to Admin Dashboard**\n\nSelect an action below:", 
+        reply_markup=markup, 
+        parse_mode="Markdown"
+    )
+
 # --- Handle Text Messages from Bottom Keyboard ---
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     user_id = message.from_user.id
-    text = message.text
     
+    # Check if user is blocked
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    if res and res[0] == 1:
+        conn.close()
+        bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
+        return
+    conn.close()
+
+    text = message.text
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     
@@ -193,14 +251,12 @@ def save_account_step(message):
     conn.close()
     bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!** Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
 
-# --- Callback Handler for Inline Buttons (Like Add Money) ---
 @bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
 def callback_add_money(call):
     bot.answer_callback_query(call.id)
     msg = bot.send_message(call.message.chat.id, "💳 Please enter the amount you want to add (Minimum **₹10**):", parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_amount_step)
 
-# --- Process Amount & Send QR Code Image ---
 def process_amount_step(message):
     user_id = message.from_user.id
     try:
@@ -216,7 +272,6 @@ def process_amount_step(message):
         conn.commit()
         conn.close()
         
-        # Generate Dynamic UPI QR Code Image with exact amount
         qr_bio = generate_upi_qr(UPI_ID, amount)
         
         markup = InlineKeyboardMarkup()
@@ -229,7 +284,6 @@ def process_amount_step(message):
             reply_markup=markup,
             parse_mode="Markdown"
         )
-        
     except ValueError:
         bot.send_message(message.chat.id, "❌ Invalid amount. Please enter numbers only.")
 
@@ -254,36 +308,135 @@ def handle_upi_submit(call):
         parse_mode="Markdown"
     )
 
+# --- Admin Callbacks Handler ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
-def admin_action(call):
+def admin_actions(call):
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "Unauthorized!")
         return
         
-    data = call.data.split("_")
-    action = data[1]
-    tx_id = data[2]
+    data = call.data
     
+    if data == "admin_broadcast":
+        msg = bot.send_message(call.message.chat.id, "📢 Send the message, photo or sticker you want to broadcast to all users:")
+        bot.register_next_step_handler(msg, execute_broadcast)
+        
+    elif data == "admin_user_list":
+        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, username FROM users WHERE is_blocked = 0")
+        users = cursor.fetchall()
+        conn.close()
+        
+        if not users:
+            bot.send_message(call.message.chat.id, "❌ No active users found.")
+            return
+            
+        user_list_text = "📋 **Active Users List:**\n\n"
+        for u in users:
+            uname = f"@{u[1]}" if u[1] != "No Username" else "No Username"
+            user_list_text += f"• ID: `{u[0]}` | {uname}\n"
+            
+            if len(user_list_text) > 3500:
+                bot.send_message(call.message.chat.id, user_list_text, parse_mode="Markdown")
+                user_list_text = ""
+                
+        if user_list_text:
+            bot.send_message(call.message.chat.id, user_list_text, parse_mode="Markdown")
+            
+    elif data == "admin_block":
+        msg = bot.send_message(call.message.chat.id, "🚫 Send the **User ID** or **Username** of the user you want to block:")
+        bot.register_next_step_handler(msg, execute_block)
+        
+    elif data == "admin_unblock":
+        msg = bot.send_message(call.message.chat.id, "🟢 Send the **User ID** or **Username** of the user you want to unblock:")
+        bot.register_next_step_handler(msg, execute_unblock)
+        
+    elif data.startswith("admin_accept_") or data.startswith("admin_reject_"):
+        parts = data.split("_")
+        action = parts[1]
+        tx_id = parts[2]
+        
+        conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+        cursor = conn.cursor()
+        
+        if action == "accept":
+            user_id = int(parts[3])
+            amount = float(parts[4])
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+            cursor.execute("UPDATE transactions SET status = 'accepted' WHERE tx_id = ?", (tx_id,))
+            conn.commit()
+            
+            bot.send_message(user_id, f"🎉 **Payment Approved!** ₹{amount} has been added to your wallet balance.")
+            bot.edit_message_text(f"✅ Accepted Deposit of ₹{amount} for User `{user_id}`", call.message.chat.id, call.message.message_id)
+            
+        elif action == "reject":
+            cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
+            conn.commit()
+            bot.edit_message_text(f"❌ Deposit Request Rejected.", call.message.chat.id, call.message.message_id)
+        conn.close()
+
+# --- Broadcast Execution ---
+def execute_broadcast(message):
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+    users = cursor.fetchall()
+    conn.close()
+    
+    success = 0
+    failed = 0
+    
+    status_msg = bot.send_message(message.chat.id, "📢 Broadcasting message to all active users...")
+    
+    for u in users:
+        try:
+            bot.copy_message(chat_id=u[0], from_chat_id=message.chat.id, message_id=message.message_id)
+            success += 1
+        except Exception:
+            failed += 1
+            
+    bot.edit_message_text(f"✅ **Broadcast Completed!**\n\n• Successful: {success}\n• Failed: {failed}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+
+# --- Block & Unblock Execution ---
+def execute_block(message):
+    query = message.text.strip().replace("@", "")
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     
-    if action == "accept":
-        user_id = int(data[3])
-        amount = float(data[4])
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-        cursor.execute("UPDATE transactions SET status = 'accepted' WHERE tx_id = ?", (tx_id,))
-        conn.commit()
+    if query.isdigit():
+        cursor.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (int(query),))
+    else:
+        cursor.execute("UPDATE users SET is_blocked = 1 WHERE username = ?", (query,))
         
-        bot.send_message(user_id, f"🎉 **Payment Approved!** ₹{amount} has been added to your wallet balance.")
-        bot.edit_message_text(f"✅ Accepted Deposit of ₹{amount} for User `{user_id}`", call.message.chat.id, call.message.message_id)
-        
-    elif action == "reject":
-        cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
-        conn.commit()
-        bot.edit_message_text(f"❌ Deposit Request Rejected.", call.message.chat.id, call.message.message_id)
-        
+    conn.commit()
+    affected = cursor.rowcount
     conn.close()
+    
+    if affected > 0:
+        bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **blocked**.", parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
+
+def execute_unblock(message):
+    query = message.text.strip().replace("@", "")
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    if query.isdigit():
+        cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (int(query),))
+    else:
+        cursor.execute("UPDATE users SET is_blocked = 0 WHERE username = ?", (query,))
+        
+    conn.commit()
+    affected = cursor.rowcount
+    conn.close()
+    
+    if affected > 0:
+        bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **unblocked**.", parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("Swiggy Automation Bot with QR Generator is running live...")
+    print("Swiggy Automation Bot with Admin Panel is running live...")
     bot.infinity_polling()
