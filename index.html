@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swiggy Cyber Automation Panel</title>
+    <!-- Telegram Web App Script -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            padding: 15px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Neon Glow Container Wrapper */
+        .neon-wrapper {
+            background: rgba(17, 24, 39, 0.7);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(252, 128, 25, 0.25), 
+                        inset 0 0 15px rgba(252, 128, 25, 0.1);
+            border: 1px solid rgba(252, 128, 25, 0.4);
+            backdrop-filter: blur(10px);
+            margin-bottom: 15px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Top Glowing Line Effect */
+        .neon-wrapper::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #ff512f, #fc8019, #f09819);
+            box-shadow: 0 0 10px #fc8019, 0 0 20px #fc8019;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .header h2 {
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(45deg, #fc8019, #ffbe76);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 10px rgba(252, 128, 25, 0.3);
+        }
+
+        .back-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(252, 128, 25, 0.5);
+            color: #fc8019;
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .back-btn:hover {
+            background: #fc8019;
+            color: white;
+            box-shadow: 0 0 10px #fc8019;
+        }
+
+        .balance-badge {
+            background: rgba(252, 128, 25, 0.15);
+            border: 1px solid rgba(252, 128, 25, 0.4);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffbe76;
+            box-shadow: inset 0 0 5px rgba(252, 128, 25, 0.2);
+        }
+
+        .card h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #e5e7eb;
+        }
+
+        .account-select {
+            width: 100%;
+            padding: 12px;
+            background: #1f2937;
+            border: 1px solid #374151;
+            color: white;
+            border-radius: 10px;
+            font-size: 15px;
+            margin-bottom: 15px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .account-select:focus {
+            border-color: #fc8019;
+            box-shadow: 0 0 10px rgba(252, 128, 25, 0.5);
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            background: linear-gradient(135deg, #fc8019, #e67e22);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            text-align: center;
+            box-shadow: 0 0 15px rgba(252, 128, 25, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 25px rgba(252, 128, 25, 0.7);
+        }
+
+        .btn-secondary {
+            background: #1f2937;
+            border: 1px solid #4b5563;
+            box-shadow: none;
+            color: #d1d5db;
+        }
+
+        .btn-secondary:hover {
+            background: #374151;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+        }
+
+        .browser-container {
+            width: 100%;
+            height: 65vh;
+            border: 2px solid rgba(252, 128, 25, 0.5);
+            border-radius: 12px;
+            background: #111827;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8), 0 0 10px rgba(252, 128, 25, 0.2);
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .control-bar {
+            display: flex;
+            gap: 12px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main App Wrapper with Neon Glow -->
+    <div class="neon-wrapper">
+        <!-- Header Section -->
+        <div class="header">
+            <button class="back-btn" id="back-btn" onclick="goHome()" style="display: none;">⬅ Back</button>
+            <h2>⚡ Swiggy Cyber Panel</h2>
+            <div class="balance-badge" id="user-balance">₹0.00</div>
+        </div>
+
+        <!-- Account Switcher View -->
+        <div id="account-view" class="card">
+            <h3>🔗 Select Swiggy Account</h3>
+            <select id="account-dropdown" class="account-select">
+                <option value="">-- Loading your accounts... --</option>
+            </select>
+            <button class="btn" onclick="loadSwiggySession()">🚀 Launch Live Session</button>
+        </div>
+
+        <!-- Live Mirroring / WebView Section -->
+        <div id="browser-view" class="card" style="display: none;">
+            <div class="browser-container">
+                <iframe id="swiggy-frame" src="about:blank"></iframe>
+            </div>
+            <div class="control-bar">
+                <button class="btn btn-secondary" onclick="reloadFrame()">🔄 Refresh</button>
+                <button class="btn" onclick="placeOrderAction()">Place Order (₹5)</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+
+        window.onload = function() {
+            fetchAccounts();
+        };
+
+        function fetchAccounts() {
+            let dropdown = document.getElementById("account-dropdown");
+            let mockAccounts = [{name: "Account_9482"}, {name: "Account_1053"}];
+            
+            dropdown.innerHTML = '<option value="">Select Connected Account</option>';
+            mockAccounts.forEach(acc => {
+                let opt = document.createElement("option");
+                opt.value = acc.name;
+                opt.innerHTML = acc.name;
+                dropdown.appendChild(opt);
+            });
+        }
+
+        function loadSwiggySession() {
+            let selectedAcc = document.getElementById("account-dropdown").value;
+            if(!selectedAcc) {
+                alert("Please select an account first!");
+                return;
+            }
+
+            document.getElementById("account-view").style.display = "none";
+            document.getElementById("back-btn").style.display = "block";
+            document.getElementById("browser-view").style.display = "block";
+
+            document.getElementById("swiggy-frame").src = "https://www.swiggy.com";
+        }
+
+        function goHome() {
+            document.getElementById("browser-view").style.display = "none";
+            document.getElementById("back-btn").style.display = "none";
+            document.getElementById("account-view").style.display = "block";
+        }
+
+        function reloadFrame() {
+            let iframe = document.getElementById("swiggy-frame");
+            iframe.src = iframe.src;
+        }
+
+        function placeOrderAction() {
+            if(confirm("Confirm order placement? ₹5 will be deducted from your balance.")) {
+                alert("Order execution signal sent to backend engine!");
+            }
+        }
+    </script>
+</body>
+</html>
