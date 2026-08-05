@@ -1,3 +1,5 @@
+import io
+import qrcode
 import sqlite3
 import random
 import string
@@ -11,7 +13,7 @@ UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 SUPPORT_BOT = "https://t.me/gbx_support_bot"
 MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
 
-# Required Channels & Group Chats Dictionary
+# Required Channels Dictionary
 CHANNELS = {
     "-1003332858806": {"name": "📢 GBX LOOT 1", "url": "https://t.me/+6ByfGDRBKgsxMjZl"},
     "-1003630519339": {"name": "📢 GBX EARN 2", "url": "https://t.me/+OWrCoeF-JutmNjg1"},
@@ -25,8 +27,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 def init_db():
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
-    
-    # Users Table
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         user_id INTEGER PRIMARY KEY,
                         balance REAL DEFAULT 0.0,
@@ -34,55 +34,57 @@ def init_db():
                         referred_by INTEGER,
                         ref_code TEXT
                     )''')
-    
-    # Accounts Table (Auth Tokens)
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER,
                         account_name TEXT,
                         auth_token TEXT
                     )''')
-    
-    # Transactions Table (Add Money)
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (
                         tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER,
                         amount REAL,
                         status TEXT DEFAULT 'pending'
                     )''')
-    
     conn.commit()
     conn.close()
 
 init_db()
 
-# Helper: Generate Ref Code
 def generate_ref_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# --- Check Force Subscription ---
-def check_subscription(user_id):
-    for channel_id in CHANNELS:
-        try:
-            member = bot.get_chat_member(channel_id, user_id)
-            if member.status not in ['member', 'administrator', 'creator']:
-                return False
-        except Exception:
-            # If bot is not admin in channel, skip or handle gracefully
-            pass
-    return True
+# --- Helper: Generate UPI QR Code Image ---
+def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
+    # UPI URI format for direct payment amount embedding
+    upi_string = f"upi://pay?pa={upi_id}&pn={name}&am={amount}&cu=INR"
+    
+    # Generate QR Code using 'qrcode' and 'Pillow'
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(upi_string)
+    qr.make(fit=True)
+    
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Save image to bytes buffer so telegram can send it directly without saving to disk
+    bio = io.BytesIO()
+    bio.name = "upi_qr.png"
+    img.save(bio, "PNG")
+    bio.seek(0)
+    return bio
 
-# --- Handlers: Start & Main Menu ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
-    
-    # Optional: Force Join Check can be added here if needed
     args = message.text.split()
     
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
-    
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
     
@@ -95,16 +97,13 @@ def send_welcome(message):
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (ref_id,))
                 if cursor.fetchone():
                     referred_by = ref_id
-                    # Add ₹3 referral bonus per successful referral
                     cursor.execute("UPDATE users SET referrals = referrals + 1, balance = balance + 3.0 WHERE user_id = ?", (ref_id,))
         
         cursor.execute("INSERT INTO users (user_id, balance, referrals, referred_by, ref_code) VALUES (?, 0.0, 0, ?, ?)", 
                        (user_id, referred_by, ref_code))
         conn.commit()
-    
     conn.close()
     
-    # Main Keyboard Layout (5 Buttons as requested)
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("👤 My Account", callback_data="my_account"),
@@ -118,15 +117,8 @@ def send_welcome(message):
         InlineKeyboardButton("🚀 Open Swiggy Mini Web", web_app=WebAppInfo(url=MINI_APP_URL))
     )
     
-    bot.send_message(
-        message.chat.id, 
-        "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\n"
-        "Manage your accounts, check your live balance, and launch the mini app securely below:", 
-        reply_markup=markup, 
-        parse_mode="Markdown"
-    )
+    bot.send_message(message.chat.id, "⚡ **Welcome to Swiggy Cyber Automation Panel**\n\nChoose an option below:", reply_markup=markup, parse_mode="Markdown")
 
-# --- Callbacks Handler ---
 @bot.callback_query_handler(func=lambda call: call.data in ["my_account", "add_account", "balance_menu", "add_money", "main_menu"])
 def handle_callbacks(call):
     user_id = call.from_user.id
@@ -136,13 +128,12 @@ def handle_callbacks(call):
     if call.data == "my_account":
         cursor.execute("SELECT account_name FROM accounts WHERE user_id = ?", (user_id,))
         accounts = cursor.fetchall()
-        
         if not accounts:
             bot.answer_callback_query(call.id, "No accounts added yet!")
             bot.send_message(call.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.")
         else:
             acc_list = "\n".join([f"🔹 {acc[0]}" for acc in accounts])
-            bot.send_message(call.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them instantly.*", parse_mode="Markdown")
+            bot.send_message(call.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown")
             
     elif call.data == "add_account":
         msg = bot.send_message(call.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
@@ -152,7 +143,6 @@ def handle_callbacks(call):
         cursor.execute("SELECT balance, referrals, ref_code FROM users WHERE user_id = ?", (user_id,))
         user_data = cursor.fetchone()
         balance, referrals, ref_code = user_data[0], user_data[1], user_data[2]
-        
         ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
         
         text = (
@@ -160,7 +150,7 @@ def handle_callbacks(call):
             f"• **Total Balance:** ₹{balance}\n"
             f"• **Total Referrals:** {referrals} (Earned ₹{referrals * 3})\n\n"
             f"🔗 **Your Referral Link:**\n`{ref_link}`\n\n"
-            f"*(Note: ₹3 added automatically per successful referral)*"
+            f"*(Note: ₹3 added per successful referral)*"
         )
         
         markup = InlineKeyboardMarkup()
@@ -190,22 +180,18 @@ def handle_callbacks(call):
 
     conn.close()
 
-# --- Save Account Step ---
 def save_account_step(message):
     user_id = message.from_user.id
     token_or_number = message.text.strip()
-    
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
-    
     acc_name = f"Account_{random.randint(1000, 9999)}"
     cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
     conn.commit()
     conn.close()
-    
-    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!**\n\nYour session has been securely mapped. Open the Mini Web to start using it.")
+    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!** Open the Mini Web to start using it.")
 
-# --- Add Money Workflow ---
+# --- Process Amount & Send QR Code Image ---
 def process_amount_step(message):
     user_id = message.from_user.id
     try:
@@ -221,14 +207,18 @@ def process_amount_step(message):
         conn.commit()
         conn.close()
         
+        # Generate Dynamic UPI QR Code Image with exact amount
+        qr_bio = generate_upi_qr(UPI_ID, amount)
+        
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ Submit UPI Reference / Paid", callback_data=f"submit_upi_{tx_id}_{amount}"))
         markup.add(InlineKeyboardButton("« Cancel", callback_data="balance_menu"))
         
-        bot.send_message(
-            message.chat.id, 
-            f"📲 **Scan / Pay to UPI:**\n`{UPI_ID}`\n\nAmount: **₹{amount}**\n\nAfter payment, click submit below:", 
-            reply_markup=markup, 
+        bot.send_photo(
+            message.chat.id,
+            photo=qr_bio,
+            caption=f"📲 **Scan & Pay ₹{amount}**\n\nUPI ID: `{UPI_ID}`\n\n*After completing the payment, click the button below to submit for admin verification:*",
+            reply_markup=markup,
             parse_mode="Markdown"
         )
         
@@ -241,9 +231,8 @@ def handle_upi_submit(call):
     tx_id, amount = data_parts[2], data_parts[3]
     user_id = call.from_user.id
     
-    bot.edit_message_text("⏳ Your payment details have been submitted. **Verifying by Admin...**", call.message.chat.id, call.message.message_id)
+    bot.edit_message_caption("⏳ Your payment details have been submitted. **Verifying by Admin...**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     
-    # Notify Admin
     admin_markup = InlineKeyboardMarkup()
     admin_markup.add(
         InlineKeyboardButton("✅ Accept", callback_data=f"admin_accept_{tx_id}_{user_id}_{amount}"),
@@ -257,7 +246,6 @@ def handle_upi_submit(call):
         parse_mode="Markdown"
     )
 
-# --- Admin Accept / Reject Handlers ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
 def admin_action(call):
     if call.from_user.id != ADMIN_ID:
@@ -274,7 +262,6 @@ def admin_action(call):
     if action == "accept":
         user_id = int(data[3])
         amount = float(data[4])
-        
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
         cursor.execute("UPDATE transactions SET status = 'accepted' WHERE tx_id = ?", (tx_id,))
         conn.commit()
@@ -290,5 +277,5 @@ def admin_action(call):
     conn.close()
 
 if __name__ == "__main__":
-    print("Swiggy Automation Bot is running live...")
+    print("Swiggy Automation Bot with QR Generator is running live...")
     bot.infinity_polling()
