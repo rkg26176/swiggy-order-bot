@@ -31,7 +31,8 @@ if firebase_json_str:
     firebase_config = json.loads(firebase_json_str)
     cred = credentials.Certificate(firebase_config)
     firebase_admin.initialize_app(cred)
-    db = firestore.client()
+    # Explicitly set default database ID to prevent 404 errors
+    db = firestore.client(database_id='(default)')
 else:
     raise ValueError("❌ FIREBASE_CREDENTIALS environment variable is missing or invalid!")
 
