@@ -151,6 +151,8 @@ def send_force_sub_prompt(chat_id, user_id, message_id=None):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    if message.chat.type != 'private':
+        return
     user_id = message.from_user.id
     username = message.from_user.username or "No Username"
     args = message.text.split()
@@ -236,6 +238,8 @@ def verify_subscription_callback(call):
 
 @bot.message_handler(commands=['admin'])
 def admin_panel(message):
+    if message.chat.type != 'private':
+        return
     if message.from_user.id != ADMIN_ID:
         bot.send_message(message.chat.id, "❌ Yah command sirf admin ke liye hai.")
         return
@@ -259,6 +263,9 @@ def admin_panel(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
+    if message.chat.type != 'private':
+        return
+        
     user_id = message.from_user.id
     
     unjoined = get_unjoined_channels(user_id)
@@ -291,7 +298,11 @@ def handle_text_messages(message):
         cursor.execute("SELECT id, account_name, auth_token FROM accounts WHERE user_id = ?", (user_id,))
         accounts = cursor.fetchall()
         if not accounts:
-            bot.send_message(message.chat.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.", reply_markup=get_main_keyboard())
+            bot.send_message(
+                message.chat.id, 
+                "❌ You haven't added any Swiggy accounts yet.\n\nClick '➕ Add Account' to add/link account.", 
+                reply_markup=get_main_keyboard()
+            )
         else:
             markup = InlineKeyboardMarkup(row_width=2)
             for acc in accounts:
@@ -302,8 +313,7 @@ def handle_text_messages(message):
                 )
             bot.send_message(
                 message.chat.id, 
-                "📋 **Your Linked Accounts:**\n\nOpen Mini Web to switch and use them, or select an account below:", 
-                parse_mode="Markdown", 
+                "📋 Your Linked Accounts:\n\nOpen Mini Web to switch and use them, or select an account below:", 
                 reply_markup=markup
             )
             
@@ -343,7 +353,7 @@ def handle_account_actions(call):
     cursor = conn.cursor()
     
     parts = call.data.split("_")
-    action = parts[0] + "_" + parts[1] # sel_acc or export_auth
+    action = parts[0] + "_" + parts[1]
     acc_id = parts[2]
     
     cursor.execute("SELECT account_name, auth_token FROM accounts WHERE id = ?", (acc_id,))
@@ -358,14 +368,13 @@ def handle_account_actions(call):
     
     if action == "export_auth_":
         bot.answer_callback_query(call.id, "📤 Exporting Auth Token...")
-        # Send JSON formatted auth token
         json_output = json.dumps({"account_name": acc_name, "auth_token": auth_token}, indent=4)
         if len(json_output) > 4000:
             bio = io.BytesIO(json_output.encode('utf-8'))
             bio.name = f"{acc_name}_auth.json"
-            bot.send_document(call.message.chat.id, bio, caption=f"📄 Auth JSON for `{acc_name}`", parse_mode="Markdown")
+            bot.send_document(call.message.chat.id, bio, caption=f"📄 Auth JSON for {acc_name}")
         else:
-            bot.send_message(call.message.chat.id, f"📄 **Auth JSON for `{acc_name}`:**\n```json\n{json_output}\n```", parse_mode="Markdown")
+            bot.send_message(call.message.chat.id, f"📄 Auth JSON for {acc_name}:\n```json\n{json_output}\n```", parse_mode="Markdown")
             
     elif action == "sel_acc_":
         bot.answer_callback_query(call.id, f"✅ Account {acc_name} selected!")
@@ -373,9 +382,8 @@ def handle_account_actions(call):
         markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
         bot.send_message(
             call.message.chat.id,
-            f"✅ **Account `{acc_name}` is connected and ready!**\n\nKripya niche diye gaye button se Mini Web kholein:",
-            reply_markup=markup,
-            parse_mode="Markdown"
+            f"✅ Account {acc_name} is connected and ready!\n\nKripya niche diye gaye button se Mini Web kholein:",
+            reply_markup=markup
         )
 
 def save_account_step(message):
@@ -385,7 +393,6 @@ def save_account_step(message):
     cursor = conn.cursor()
     acc_name = f"Acc_{random.randint(1000, 9999)}"
     
-    # Try parsing if user sent JSON
     try:
         if token_or_number.startswith("{"):
             data = json.loads(token_or_number)
@@ -399,7 +406,7 @@ def save_account_step(message):
     cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
     conn.commit()
     conn.close()
-    bot.send_message(message.chat.id, f"✅ **Account ({acc_name}) Successfully Linked!** Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
+    bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Successfully Linked! Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
 def callback_add_money(call):
@@ -458,20 +465,15 @@ def process_utr_step(message, tx_id, amount):
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
     
-    # Check if UTR is already used anywhere
     cursor.execute("SELECT * FROM used_utrs WHERE utr = ?", (utr,))
     if cursor.fetchone():
         conn.close()
         bot.send_message(message.chat.id, "❌ **This UTR has already been used!** Each UTR can only be used once.", parse_mode="Markdown", reply_markup=get_main_keyboard())
         return
 
-    # Mark UTR as used permanently
     cursor.execute("INSERT OR IGNORE INTO used_utrs (utr) VALUES (?)", (utr,))
-    
-    # Update transaction with UTR
     cursor.execute("UPDATE transactions SET utr = ?, status = 'pending' WHERE tx_id = ?", (utr, tx_id))
     
-    # Fetch user username & count total transactions for this user
     cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
     user_res = cursor.fetchone()
     username = f"@{user_res[0]}" if user_res and user_res[0] != "No Username" else "No Username"
@@ -578,7 +580,6 @@ def admin_actions(call):
             cursor.execute("UPDATE transactions SET status = 'rejected' WHERE tx_id = ?", (tx_id,))
             conn.commit()
             
-            # Send rejection message with support button to user
             reject_markup = InlineKeyboardMarkup()
             reject_markup.add(InlineKeyboardButton("💬 Open Support", url=SUPPORT_BOT))
             bot.send_message(
@@ -659,7 +660,7 @@ def execute_unblock(message):
         
     conn.commit()
     affected = db_cursor.rowcount
-    conn.close()
+    cursor.close()
     
     if affected > 0:
         bot.send_message(message.chat.id, f"✅ User `{query}` has been successfully **unblocked**.", parse_mode="Markdown")
