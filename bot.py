@@ -15,7 +15,7 @@ from io import BytesIO
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
 ADMIN_ID = 8053042225
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
-SUPPORT_BOT = "https://t.me/gbx_support_bot"
+SUPPORT_BOT = "https://t.me/Gbx_support_bot"
 MINI_APP_URL = "https://rkg26176.github.io/swiggy-order-bot/"
 
 # Your Correct Channels Dictionary
