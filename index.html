@@ -23,7 +23,7 @@
 
         /* Perfect Centered Lock Screen */
         #lock-screen {
-            display: none;
+            display: flex;
             position: fixed;
             top: 0;
             left: 0;
@@ -69,6 +69,7 @@
         
         /* Main App Content Styling */
         .container {
+            display: none;
             max-width: 400px;
             width: 90%;
             margin: 30px auto;
@@ -144,16 +145,21 @@
     </div>
 
     <script>
-        // Check if opened inside Telegram Bot
-        window.addEventListener('DOMContentLoaded', (event) => {
+        // Check Telegram WebApp environment properly
+        window.addEventListener('DOMContentLoaded', () => {
             const tg = window.Telegram.WebApp;
             
-            // If initData is empty, it means it's opened in an external browser
-            if (!tg.initData || tg.initData === "") {
+            // Check if opened inside Telegram (either initData exists or tg platform is available)
+            if (tg && (tg.initData || tg.platform || window.location.hash.includes('tgWebAppData'))) {
+                document.getElementById('lock-screen').style.display = 'none';
+                document.getElementById('main-content').style.display = 'block';
+                try {
+                    tg.expand();
+                } catch(e) {}
+            } else {
+                // Keep lock screen open if outside Telegram
                 document.getElementById('lock-screen').style.display = 'flex';
                 document.getElementById('main-content').style.display = 'none';
-            } else {
-                tg.expand();
             }
         });
 
