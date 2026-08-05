@@ -288,16 +288,27 @@ def handle_text_messages(message):
     text = message.text
     
     if text == "👤 My Account":
-        cursor.execute("SELECT account_name FROM accounts WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT id, account_name, auth_token FROM accounts WHERE user_id = ?", (user_id,))
         accounts = cursor.fetchall()
         if not accounts:
             bot.send_message(message.chat.id, "❌ You haven't added any Swiggy accounts yet. Click '➕ Add Account' to link one.", reply_markup=get_main_keyboard())
         else:
-            acc_list = "\n".join([f"🔹 {acc[0]}" for acc in accounts])
-            bot.send_message(message.chat.id, f"📋 **Your Linked Accounts:**\n\n{acc_list}\n\n*Open Mini Web to switch and use them.*", parse_mode="Markdown", reply_markup=get_main_keyboard())
+            markup = InlineKeyboardMarkup(row_width=2)
+            for acc in accounts:
+                acc_id, acc_name, _ = acc
+                markup.add(
+                    InlineKeyboardButton(f"📱 {acc_name}", callback_data=f"sel_acc_{acc_id}"),
+                    InlineKeyboardButton("📤 Export Auth", callback_data=f"export_auth_{acc_id}")
+                )
+            bot.send_message(
+                message.chat.id, 
+                "📋 **Your Linked Accounts:**\n\nOpen Mini Web to switch and use them, or select an account below:", 
+                parse_mode="Markdown", 
+                reply_markup=markup
+            )
             
     elif text == "➕ Add Account":
-        msg = bot.send_message(message.chat.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** to link your account:")
+        msg = bot.send_message(message.chat.id, "📲 Please send your Swiggy **Auth Token** or registered **Mobile Number** (JSON format supported) to link your account:")
         bot.register_next_step_handler(msg, save_account_step)
         
     elif text == "💰 Balance & Refer":
@@ -326,16 +337,69 @@ def handle_text_messages(message):
         
     conn.close()
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sel_acc_") or call.data.startswith("export_auth_"))
+def handle_account_actions(call):
+    conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    
+    parts = call.data.split("_")
+    action = parts[0] + "_" + parts[1] # sel_acc or export_auth
+    acc_id = parts[2]
+    
+    cursor.execute("SELECT account_name, auth_token FROM accounts WHERE id = ?", (acc_id,))
+    acc = cursor.fetchone()
+    conn.close()
+    
+    if not acc:
+        bot.answer_callback_query(call.id, "❌ Account not found!")
+        return
+        
+    acc_name, auth_token = acc
+    
+    if action == "export_auth_":
+        bot.answer_callback_query(call.id, "📤 Exporting Auth Token...")
+        # Send JSON formatted auth token
+        json_output = json.dumps({"account_name": acc_name, "auth_token": auth_token}, indent=4)
+        if len(json_output) > 4000:
+            bio = io.BytesIO(json_output.encode('utf-8'))
+            bio.name = f"{acc_name}_auth.json"
+            bot.send_document(call.message.chat.id, bio, caption=f"📄 Auth JSON for `{acc_name}`", parse_mode="Markdown")
+        else:
+            bot.send_message(call.message.chat.id, f"📄 **Auth JSON for `{acc_name}`:**\n```json\n{json_output}\n```", parse_mode="Markdown")
+            
+    elif action == "sel_acc_":
+        bot.answer_callback_query(call.id, f"✅ Account {acc_name} selected!")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
+        bot.send_message(
+            call.message.chat.id,
+            f"✅ **Account `{acc_name}` is connected and ready!**\n\nKripya niche diye gaye button se Mini Web kholein:",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+
 def save_account_step(message):
     user_id = message.from_user.id
     token_or_number = message.text.strip()
     conn = sqlite3.connect("swiggy_bot.db", check_same_thread=False)
     cursor = conn.cursor()
-    acc_name = f"Account_{random.randint(1000, 9999)}"
+    acc_name = f"Acc_{random.randint(1000, 9999)}"
+    
+    # Try parsing if user sent JSON
+    try:
+        if token_or_number.startswith("{"):
+            data = json.loads(token_or_number)
+            if "account_name" in data:
+                acc_name = data["account_name"]
+            if "auth_token" in data:
+                token_or_number = data["auth_token"]
+    except Exception:
+        pass
+
     cursor.execute("INSERT INTO accounts (user_id, account_name, auth_token) VALUES (?, ?, ?)", (user_id, acc_name, token_or_number))
     conn.commit()
     conn.close()
-    bot.send_message(message.chat.id, f"✅ **Account Successfully Linked!** Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
+    bot.send_message(message.chat.id, f"✅ **Account ({acc_name}) Successfully Linked!** Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
 def callback_add_money(call):
