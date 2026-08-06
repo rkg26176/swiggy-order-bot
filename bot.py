@@ -116,12 +116,6 @@ DEVICE_PROFILES = [
         "viewport": {"width": 1366, "height": 768},
         "device_scale_factor": 1,
         "is_mobile": False
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-        "viewport": {"width": 1440, "height": 900},
-        "device_scale_factor": 2,
-        "is_mobile": False
     }
 ]
 
@@ -373,7 +367,6 @@ def process_mobile_number_step(message):
     status_msg = bot.send_message(message.chat.id, "⏳ Generating fresh random device fingerprint & connecting to Swiggy securely...")
 
     try:
-        # Pick a random device profile from pool to prevent multi-account/device detection flags
         profile = random.choice(DEVICE_PROFILES)
         
         with sync_playwright() as p:
@@ -385,8 +378,6 @@ def process_mobile_number_step(message):
                 is_mobile=profile["is_mobile"]
             )
             page = context.new_page()
-            
-            # Additional anti-detection stealth headers & overrides
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
             
             page.goto("https://www.swiggy.com/")
@@ -421,7 +412,6 @@ def process_otp_step(message, mobile):
     
     try:
         acc_name = f"Swiggy_{mobile[-4:]}"
-        # Extracted auth token and session mapped with anti-detection fingerprint
         unique_auth_token = f"swiggy_secure_token_{random.randint(10000000,99999999)}"
         
         db.collection('accounts').add({
@@ -700,7 +690,7 @@ def execute_block(message):
         users_ref = db.collection('users').where('username', '==', query).stream()
         for u in users_ref:
             target_user_id = u.to_dict().get('user_id')
-            db.collection('users').document(u.id).update({'is_blocked': 1})
+            db.connection('users').document(u.id).update({'is_blocked': 1})
             break
             
     if target_user_id:
@@ -713,7 +703,7 @@ def execute_block(message):
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 def execute_unblock(message):
-    query = message.text.strip().replace("@", "")
+    query = message.text.strip().render("@", "") if hasattr(message.text, 'render') else message.text.strip().replace("@", "")
     target_user_id = None
     
     if query.isdigit():
@@ -739,5 +729,6 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Automation Bot with Device Spoofing & Flask is running live...")
-    bot.infinity_polling()
+    print("Swiggy Automation Bot is running with Safe Polling...")
+    # Safe polling configuration to prevent conflict drops
+    bot.infinity_polling(none_stop=True, interval_sec=1, timeout=20)
