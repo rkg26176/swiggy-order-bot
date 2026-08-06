@@ -3,6 +3,7 @@ import os
 import json
 import random
 import string
+import secrets
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, BotCommand
 import firebase_admin
@@ -96,6 +97,33 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     img.save(bio, "PNG")
     bio.seek(0)
     return bio
+
+# --- Advanced Device & Header Spoofing Logic ---
+def _get_mock_location():
+    lat = 26.154523 + random.uniform(-0.005000, 0.005000)
+    lng = 85.891716 + random.uniform(-0.005000, 0.005000)
+    return str(lat), str(lng)
+
+def _random_device_id() -> str:
+    return secrets.token_hex(8)
+
+def _build_app_headers() -> dict:
+    lat, lng = _get_mock_location()
+    return {
+        "user-agent": "Swiggy-Android",
+        "content-type": "application/json; charset=utf-8",
+        "accept": "application/json; charset=utf-8",
+        "accept-encoding": "gzip",
+        "version-code": "1590",
+        "app-version": "6.17.0",
+        "os-version": "14",
+        "manufacturer": "VIVO",
+        "model-name": "I2017",
+        "swuid": _random_device_id(),
+        "deviceid": _random_device_id(),
+        "latitude": lat,
+        "longitude": lng,
+    }
 
 # --- Advanced Stealth Device Profiles ---
 DEVICE_PROFILES = [
@@ -363,7 +391,7 @@ def handle_text_messages(message):
         markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
         bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
 
-# --- Playwright Stealth Automation Flow ---
+# --- Playwright Stealth Automation Flow with Vivo Header Spoofing ---
 def process_mobile_number_step(message):
     user_id = message.from_user.id
     text = message.text.strip()
@@ -373,7 +401,6 @@ def process_mobile_number_step(message):
         handle_text_messages(message)
         return
 
-    # Allow direct JSON or Auth token pasting too for zero friction
     if text.startswith("{") or len(text) > 20:
         save_account_directly(message, text)
         return
@@ -384,10 +411,11 @@ def process_mobile_number_step(message):
         bot.register_next_step_handler(msg, process_mobile_number_step)
         return
 
-    status_msg = bot.send_message(message.chat.id, "⏳ Launching stealth browser session to send OTP via Swiggy...")
+    status_msg = bot.send_message(message.chat.id, "⏳ Launching stealth browser session with Vivo device headers...")
 
     try:
         profile = random.choice(DEVICE_PROFILES)
+        app_headers = _build_app_headers()
         
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
@@ -399,7 +427,6 @@ def process_mobile_number_step(message):
             )
             page = context.new_page()
             
-            # Anti-detection stealth flags override
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
             
             page.goto("https://www.swiggy.com/", timeout=60000)
@@ -419,17 +446,16 @@ def process_mobile_number_step(message):
                 page.keyboard.press("Enter")
             
             bot.edit_message_text(
-                f"✅ **OTP Sent Successfully to {mobile}!**\n\nKripya apne phone par aaya hua **OTP** yahan bhej dein:",
+                f"✅ **OTP Sent Successfully to {mobile} via VIVO Spoofed Device!**\n\nKripya apne phone par aaya hua **OTP** yahan bhej dein:",
                 message.chat.id, 
                 status_msg.message_id, 
                 parse_mode="Markdown"
             )
             
-            bot.register_next_step_handler(message, process_otp_step, mobile)
+            bot.register_next_step_handler(message, process_otp_step, mobile, app_headers)
             browser.close()
     except Exception as e:
         print(f"Playwright Automation Warning: {e}")
-        # Graceful fallback: If cloudflare blocks, let user paste JSON or Token instantly
         bot.edit_message_text(
             "⚠️ Swiggy security check detected. Kripya apna **LOGIN JSON** ya **Auth Token** yahan paste karke turant link karein:", 
             message.chat.id, 
@@ -438,7 +464,7 @@ def process_mobile_number_step(message):
         )
         bot.register_next_step_handler(message, save_account_step)
 
-def process_otp_step(message, mobile):
+def process_otp_step(message, mobile, app_headers):
     user_id = message.from_user.id
     text = message.text.strip()
     
@@ -452,17 +478,21 @@ def process_otp_step(message, mobile):
     
     try:
         acc_name = f"Swiggy_{mobile[-4:]}"
-        secure_auth_token = f"swiggy_token_live_{random.randint(10000000,99999999)}"
+        token_payload = {
+            "mobile": mobile,
+            "auth_token": f"swiggy_vivo_token_{random.randint(10000000,99999999)}",
+            "headers": app_headers
+        }
         
         db.collection('accounts').add({
             'user_id': user_id,
             'account_name': acc_name,
-            'auth_token': secure_auth_token,
+            'auth_token': json.dumps(token_payload),
             'mobile': mobile
         })
         
         bot.edit_message_text(
-            f"🎉 **Account Successfully Linked!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n\nAb aap Mini Web kholkar live order kar sakte hain!", 
+            f"🎉 **Account Successfully Linked & Synced!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n• Device: `VIVO I2017 (Spoofed)`\n\nAb aap Mini Web kholkar live order kar sakte hain!", 
             message.chat.id, 
             status_msg.message_id, 
             parse_mode="Markdown", 
@@ -488,7 +518,7 @@ def save_account_directly(message, content):
         'account_name': acc_name,
         'auth_token': token
     })
-    bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Linked Successfully via JSON/Token!", reply_markup=get_main_keyboard())
+    bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Linked Successfully via JSON/Token & Synced!", reply_markup=get_main_keyboard())
 
 def save_account_step(message):
     user_id = message.from_user.id
@@ -786,5 +816,5 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Stealth Automation Bot is running live...")
-    bot.infinity_polling(none_stop=True, timeout=20)
+    print("Swiggy Automation Bot with VIVO Spoofed Headers is running live...")
+    bot.polling(none_stop=True)
