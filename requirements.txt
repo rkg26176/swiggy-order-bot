@@ -2,4 +2,4 @@ pyTelegramBotAPI
 firebase-admin
 qrcode
 Pillow
-requests
+flask
