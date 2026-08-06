@@ -690,7 +690,7 @@ def execute_block(message):
         users_ref = db.collection('users').where('username', '==', query).stream()
         for u in users_ref:
             target_user_id = u.to_dict().get('user_id')
-            db.connection('users').document(u.id).update({'is_blocked': 1})
+            db.collection('users').document(u.id).update({'is_blocked': 1})
             break
             
     if target_user_id:
@@ -703,7 +703,7 @@ def execute_block(message):
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 def execute_unblock(message):
-    query = message.text.strip().render("@", "") if hasattr(message.text, 'render') else message.text.strip().replace("@", "")
+    query = message.text.strip().replace("@", "")
     target_user_id = None
     
     if query.isdigit():
@@ -730,5 +730,4 @@ def execute_unblock(message):
 if __name__ == "__main__":
     keep_alive()
     print("Swiggy Automation Bot is running with Safe Polling...")
-    # Safe polling configuration to prevent conflict drops
-    bot.infinity_polling(none_stop=True, interval_sec=1, timeout=20)
+    bot.infinity_polling(none_stop=True, timeout=20)
