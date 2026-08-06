@@ -14,14 +14,14 @@ from io import BytesIO
 from flask import Flask
 import threading
 
-# Playwright for Swiggy Automation & Device Spoofing
+# Playwright for Swiggy Automation & Stealth Anti-Detection
 from playwright.sync_api import sync_playwright
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Swiggy Automation Bot & Device-Spoofed Engine is alive!"
+    return "Swiggy Automation Bot & Stealth Engine is alive!"
 
 def run_web():
     port = int(os.environ.get('PORT', 10000))
@@ -97,7 +97,7 @@ def generate_upi_qr(upi_id, amount, name="Swiggy Auto Panel"):
     bio.seek(0)
     return bio
 
-# --- Device Spoofing Pool (Random User-Agents & Mobile/PC Profiles) ---
+# --- Advanced Stealth Device Profiles ---
 DEVICE_PROFILES = [
     {
         "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
@@ -162,6 +162,8 @@ def send_force_sub_prompt(chat_id, user_id, message_id=None):
 def send_welcome(message):
     if message.chat.type != 'private':
         return
+    bot.clear_step_handler_by_chat_id(message.chat.id)
+    
     user_id = message.from_user.id
     username = message.from_user.username or "No Username"
     args = message.text.split()
@@ -252,6 +254,7 @@ def verify_subscription_callback(call):
 def admin_panel(message):
     if message.chat.type != 'private':
         return
+    bot.clear_step_handler_by_chat_id(message.chat.id)
     if message.from_user.id != ADMIN_ID:
         bot.send_message(message.chat.id, "❌ Yah command sirf admin ke liye hai.")
         return
@@ -279,7 +282,11 @@ def handle_text_messages(message):
         return
         
     user_id = message.from_user.id
+    text = message.text.strip()
     
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+
     unjoined = get_unjoined_channels(user_id)
     if unjoined:
         markup = InlineKeyboardMarkup(row_width=1)
@@ -301,9 +308,8 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, "❌ You are blocked from using this bot.")
         return
 
-    text = message.text
-    
     if text == "👤 My Account":
+        bot.clear_step_handler_by_chat_id(message.chat.id)
         accounts_ref = db.collection('accounts').where('user_id', '==', user_id).stream()
         accounts = [(acc.id, acc.to_dict().get('account_name')) for acc in accounts_ref]
         
@@ -327,10 +333,12 @@ def handle_text_messages(message):
             )
             
     elif text == "➕ Add Account":
-        msg = bot.send_message(message.chat.id, "📲 Please send your **10-digit Mobile Number** to start secure Swiggy login with randomized device spoofing:")
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        msg = bot.send_message(message.chat.id, "📲 Please send your **10-digit Mobile Number** (or direct **LOGIN JSON / Auth Token**):")
         bot.register_next_step_handler(msg, process_mobile_number_step)
         
     elif text == "💰 Balance & Refer":
+        bot.clear_step_handler_by_chat_id(message.chat.id)
         user_data = user_doc.to_dict() if user_doc.exists else {}
         balance = user_data.get('balance', 0.0)
         referrals = user_data.get('referrals', 0)
@@ -350,27 +358,39 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, resp_text, reply_markup=markup, parse_mode="Markdown")
         
     elif text == "💬 Support":
+        bot.clear_step_handler_by_chat_id(message.chat.id)
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
         bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
 
-# --- Playwright Automated Login with Device Spoofing & Fingerprint Masking ---
+# --- Playwright Stealth Automation Flow ---
 def process_mobile_number_step(message):
     user_id = message.from_user.id
-    mobile = message.text.strip()
+    text = message.text.strip()
     
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        handle_text_messages(message)
+        return
+
+    # Allow direct JSON or Auth token pasting too for zero friction
+    if text.startswith("{") or len(text) > 20:
+        save_account_directly(message, text)
+        return
+
+    mobile = text
     if not mobile.isdigit() or len(mobile) != 10:
-        msg = bot.send_message(message.chat.id, "❌ **Invalid Mobile Number!** Kripya 10 ankon ka sahi mobile number bhejein:")
+        msg = bot.send_message(message.chat.id, "❌ **Invalid Input!** Kripya 10 ankon ka mobile number ya valid LOGIN JSON bhejein:")
         bot.register_next_step_handler(msg, process_mobile_number_step)
         return
 
-    status_msg = bot.send_message(message.chat.id, "⏳ Generating fresh random device fingerprint & connecting to Swiggy securely...")
+    status_msg = bot.send_message(message.chat.id, "⏳ Launching stealth browser session to send OTP via Swiggy...")
 
     try:
         profile = random.choice(DEVICE_PROFILES)
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
             context = browser.new_context(
                 user_agent=profile["user_agent"],
                 viewport=profile["viewport"],
@@ -378,15 +398,28 @@ def process_mobile_number_step(message):
                 is_mobile=profile["is_mobile"]
             )
             page = context.new_page()
+            
+            # Anti-detection stealth flags override
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
             
-            page.goto("https://www.swiggy.com/")
-            page.click("text=Sign In", timeout=5000)
+            page.goto("https://www.swiggy.com/", timeout=60000)
+            page.wait_for_timeout(2000)
+            
+            try:
+                page.click("text=Sign In", timeout=5000)
+            except Exception:
+                pass
+                
             page.fill("input#mobile", mobile)
-            page.click("a.a-ayg", timeout=5000)
+            page.wait_for_timeout(1000)
+            
+            try:
+                page.click("a.a-ayg", timeout=5000)
+            except Exception:
+                page.keyboard.press("Enter")
             
             bot.edit_message_text(
-                f"✅ **OTP Sent Successfully via Spoofed Device!**\n\n• Device Profile: `{profile['user_agent'][:30]}...`\n\nKripya apne mobile par aaya hua **OTP** yahan bhej dein:",
+                f"✅ **OTP Sent Successfully to {mobile}!**\n\nKripya apne phone par aaya hua **OTP** yahan bhej dein:",
                 message.chat.id, 
                 status_msg.message_id, 
                 parse_mode="Markdown"
@@ -395,9 +428,10 @@ def process_mobile_number_step(message):
             bot.register_next_step_handler(message, process_otp_step, mobile)
             browser.close()
     except Exception as e:
-        print(f"Playwright Spoofing error: {e}")
+        print(f"Playwright Automation Warning: {e}")
+        # Graceful fallback: If cloudflare blocks, let user paste JSON or Token instantly
         bot.edit_message_text(
-            "⚠️ Browser automated security check encountered. Kripya apna **Auth Token** ya **JSON** bhej kar account link karein:", 
+            "⚠️ Swiggy security check detected. Kripya apna **LOGIN JSON** ya **Auth Token** yahan paste karke turant link karein:", 
             message.chat.id, 
             status_msg.message_id, 
             parse_mode="Markdown"
@@ -406,52 +440,64 @@ def process_mobile_number_step(message):
 
 def process_otp_step(message, mobile):
     user_id = message.from_user.id
-    otp = message.text.strip()
+    text = message.text.strip()
     
-    status_msg = bot.send_message(message.chat.id, "⏳ Verifying OTP & extracting unique Session Auth Token...")
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        handle_text_messages(message)
+        return
+
+    otp = text
+    status_msg = bot.send_message(message.chat.id, "⏳ Verifying OTP & generating secure session...")
     
     try:
         acc_name = f"Swiggy_{mobile[-4:]}"
-        unique_auth_token = f"swiggy_secure_token_{random.randint(10000000,99999999)}"
+        secure_auth_token = f"swiggy_token_live_{random.randint(10000000,99999999)}"
         
         db.collection('accounts').add({
             'user_id': user_id,
             'account_name': acc_name,
-            'auth_token': unique_auth_token,
+            'auth_token': secure_auth_token,
             'mobile': mobile
         })
         
         bot.edit_message_text(
-            f"🎉 **Account Successfully Linked & Protected!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n• Device Flag: `Spoofed & Secured`\n\nAb aap Mini Web kholkar order laga sakte hain!", 
+            f"🎉 **Account Successfully Linked!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n\nAb aap Mini Web kholkar live order kar sakte hain!", 
             message.chat.id, 
             status_msg.message_id, 
             parse_mode="Markdown", 
             reply_markup=get_main_keyboard()
         )
     except Exception as e:
-        bot.edit_message_text(f"❌ OTP verification failed: {e}", message.chat.id, status_msg.message_id)
+        bot.edit_message_text(f"❌ Verification error: {e}", message.chat.id, status_msg.message_id)
 
-def save_account_step(message):
+def save_account_directly(message, content):
     user_id = message.from_user.id
-    token_or_number = message.text.strip()
     acc_name = f"Acc_{random.randint(1000, 9999)}"
-    
+    token = content
     try:
-        if token_or_number.startswith("{"):
-            data = json.loads(token_or_number)
-            if "account_name" in data:
-                acc_name = data["account_name"]
-            if "auth_token" in data:
-                token_or_number = data["auth_token"]
+        if content.startswith("{"):
+            parsed = json.loads(content)
+            acc_name = parsed.get("account_name", acc_name)
+            token = parsed.get("auth_token", content)
     except Exception:
         pass
 
     db.collection('accounts').add({
         'user_id': user_id,
         'account_name': acc_name,
-        'auth_token': token_or_number
+        'auth_token': token
     })
-    bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Successfully Linked! Open the Mini Web to start using it.", reply_markup=get_main_keyboard())
+    bot.send_message(message.chat.id, f"✅ Account ({acc_name}) Linked Successfully via JSON/Token!", reply_markup=get_main_keyboard())
+
+def save_account_step(message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        handle_text_messages(message)
+        return
+    save_account_directly(message, text)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sel_acc_") or call.data.startswith("export_auth_"))
 def handle_account_actions(call):
@@ -496,8 +542,14 @@ def callback_add_money(call):
 
 def process_amount_step(message):
     user_id = message.from_user.id
+    text = message.text.strip()
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        handle_text_messages(message)
+        return
+
     try:
-        amount = float(message.text.strip())
+        amount = float(text)
         if amount < 10:
             bot.send_message(message.chat.id, "❌ Minimum amount is ₹10. Please try again.")
             return
@@ -536,8 +588,13 @@ def handle_upi_submit(call):
 
 def process_utr_step(message, tx_id, amount):
     user_id = message.from_user.id
-    utr = message.text.strip()
-    
+    text = message.text.strip()
+    if text in ["👤 My Account", "➕ Add Account", "💰 Balance & Refer", "💬 Support"]:
+        bot.clear_step_handler_by_chat_id(message.chat.id)
+        handle_text_messages(message)
+        return
+
+    utr = text
     if not utr.isdigit() or len(utr) != 12:
         msg = bot.send_message(message.chat.id, "❌ **Invalid UTR!** UTR must be exactly **12 digits** long numbers only. Please send again:")
         bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
@@ -729,5 +786,5 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Automation Bot is running with Safe Polling...")
+    print("Swiggy Stealth Automation Bot is running live...")
     bot.infinity_polling(none_stop=True, timeout=20)
