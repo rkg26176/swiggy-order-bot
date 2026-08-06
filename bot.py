@@ -10,6 +10,25 @@ from firebase_admin import credentials, firestore
 import qrcode
 from io import BytesIO
 
+# --- Flask Keep-Alive Server for Render Free Tier ---
+from flask import Flask
+import threading
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Swiggy Automation Bot is alive and running!"
+
+def run_web():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = threading.Thread(target=run_web)
+    t.start()
+# ----------------------------------------------------
+
 # --- Credentials & Config ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8813624728:AAExTQgI3yRb2XqEzhX6LFzGMjRhFNHujkw")
 ADMIN_ID = 8053042225
@@ -418,7 +437,6 @@ def process_utr_step(message, tx_id, amount):
     user_id = message.from_user.id
     utr = message.text.strip()
     
-    # Strictly validate that UTR must be exactly 12 digits (numeric)
     if not utr.isdigit() or len(utr) != 12:
         msg = bot.send_message(message.chat.id, "❌ **Invalid UTR!** UTR must be exactly **12 digits** long numbers only. Please send again:")
         bot.register_next_step_handler(msg, process_utr_step, tx_id, amount)
@@ -609,5 +627,6 @@ def execute_unblock(message):
         bot.send_message(message.chat.id, f"❌ User `{query}` not found in database.", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("Swiggy Automation Bot is running live with Firebase Cloud Database...")
+    keep_alive()  # Render Web Service ke liye port keep-alive server start karega
+    print("Swiggy Automation Bot is running live with Firebase Cloud Database & Flask Port...")
     bot.infinity_polling()
