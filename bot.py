@@ -12,15 +12,42 @@ from firebase_admin import credentials, firestore
 import qrcode
 from io import BytesIO
 
-# --- Flask Keep-Alive Server for Render Free Tier ---
-from flask import Flask
+# --- Flask Keep-Alive & AI API Server ---
+from flask import Flask, request, jsonify
 import threading
 
 app = Flask('')
 
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "YOUR_GEMINI_API_KEY_HERE")
+
 @app.route('/')
 def home():
     return "Swiggy Automation Bot & Stealth Engine with Official API is alive!"
+
+@app.route('/api/ai-chat', methods=['POST'])
+def ai_chat_proxy():
+    try:
+        data = request.json
+        user_prompt = data.get('prompt', '')
+        active_acc = data.get('account', 'Default Account')
+
+        # Google Gemini API Call
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"You are a smart Swiggy food ordering assistant. The user is currently using account '{active_acc}'. User says/commands: '{user_prompt}'. Give a human-like, helpful, and concise response related to food ordering, cart management, or bills."}]
+            }]
+        }
+
+        resp = requests.post(gemini_url, headers=headers, data=json.dumps(payload), timeout=15)
+        res_json = resp.json()
+        
+        ai_reply = res_json['candidates'][0]['content']['parts'][0]['text']
+        return jsonify({"reply": ai_reply})
+    except Exception as e:
+        return jsonify({"reply": f"AI Error: {str(e)}"})
 
 def run_web():
     port = int(os.environ.get('PORT', 10000))
@@ -45,7 +72,7 @@ verify_url = f"{PROFILE_BASE_URL}/api/v3/app/login/verify"
 # Hardcoded Master Universal Session for Admin
 MASTER_UNIVERSAL_SESSION = {
   "token": "76932387-1d87-4f64-9be4-929b5bf076aac877cd7b-9ac2-40c2-9f62-d49e29852376",
-  "tid": "eyJLSUQiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiSFMyNTYifQ.eyJpYXQiOjE3ODU3MjQyMzQsImV4cCI6MTc4ODMxNjIzNCwic2Vzc2lvbl9kYXRhIjoiK01RTkFaNEJpejd5VzBHRHJ5WnFPbG83aVZRNGlvbHNvekFjVlBucC9Hcmx1cTE2aFBSTjVuOUp4UVh5S1FENWNncmJFU0ZuUWFHSnVZOHNRNU5VdUZHyXl0c1lwbjIzcTMxZ1hsYlhmUGV6bCtXeDRhYXpZVUw0eml3S3RJVFo5dllPdzFOaHhhaFZGWmJTS2NiZzJpMnZpY0hKUk5PVmlSRVUwa0FrQWNBVFQyeUNCYk12MXJVZENsekQvMWxOWDl1T1RSY0RoMjFVU1BKdEhTbUR3VWJmbURMM2hVMzRHbUlhZjFxYkdmYTZFaWxlbi9DTml4YnNxYWpmVVd3TjczWmdtajF1WisxelgxdVVkQ0VSbkFFcHJGdk5IS3lZLzgzcFk4Q2hnZ3Fpalc3K3ozY1MwdHNhWjNXblphS1pWMHdaTUE9PSIsImlzcyI6ImhhcCIsInVzZXJfaWQiOiIyNTcwNTY5NDQiLCJzaWQiOiJzdThjYTg2NTgyYS04MGU2LTRhN2UtYTE0NS1jYjhiZjA1ZWQiLCJzdWIiOiIwMWIxMmU1Yy1kNGIxLTRmOWMtYmMzMC1lMjE3MjRlZjQwYTAifQ.FH9icNTAaLw0PNSEjWmDAp2VTYOhTzmeGv5Vb2KtLj8",
+  "tid": "eyJLSUQiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiSFMyNTYifQ.eyJpYXQiOjE3ODU3MjQyMzQsImV4cCI6MTc4ODMxNjIzNCwic2Vzc2lvbl9kYXRhIjoiK01RTkFaNEJpejd5VzBHRHJ5WnFPbG83aVZRNGlvbHNvekFjVlBucC9Hcmx1cTE2aFBSTjVuOUp4UVh5S1FENWNncmJFU0ZuUWFHSnVZOHNRNU5VdUZHyXl0c1lwbjIzcTMxZ1hsYlhmUGV6bCtXeDRhYXpZVUw0eml3S3RJVFo5dllPdzFOaHhhaFZGWmJTS2NiZzJpMnZpY0hKUk5PVmlSRVUwa0FrQWNBVFQyeUNCYk12MXJVZENsekQvMWxOWDl1T1RSY0RoMjFVU1BKdEhTbUR3VWJmbURMM2hVMzRHbUlhZjFxYkdmYTZFaWxlbi9DTml4YnNxYWpmVVd3TjczWmdtajF1WisxelgxdVVkQ0VSbkFFcHJGdk5IS3lZLzgzcFk4O",
   "sid": "su8ca86582a-80e6-4a7e-a145-cb8bf05ed",
   "deviceId": "b1a32d74fbe239eb",
   "customerId": "257056944",
