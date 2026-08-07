@@ -4,6 +4,7 @@ import json
 import random
 import string
 import secrets
+import requests
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, BotCommand
 import firebase_admin
@@ -15,14 +16,11 @@ from io import BytesIO
 from flask import Flask
 import threading
 
-# Playwright for Swiggy Automation & Stealth Anti-Detection
-from playwright.sync_api import sync_playwright
-
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Swiggy Automation Bot & Stealth Engine is alive!"
+    return "Swiggy Automation Bot & Stealth Engine with Official API is alive!"
 
 def run_web():
     port = int(os.environ.get('PORT', 10000))
@@ -39,6 +37,10 @@ ADMIN_ID = 8053042225
 UPI_ID = "BHARATPE.8R0I1G1N4X31943@fbpe"
 SUPPORT_BOT = "https://t.me/Gbx_support_bot"
 MINI_APP_URL = os.environ.get('MINI_APP_URL', "https://rkg26176.github.io/swiggy-order-bot/")
+
+PROFILE_BASE_URL = "https://profile.swiggy.com"
+otp_url = f"{PROFILE_BASE_URL}/api/v3/app/sms_otp"
+verify_url = f"{PROFILE_BASE_URL}/api/v3/app/login/verify"
 
 # Your Correct Channels Dictionary
 CHANNELS = {
@@ -124,28 +126,6 @@ def _build_app_headers() -> dict:
         "latitude": lat,
         "longitude": lng,
     }
-
-# --- Advanced Stealth Device Profiles ---
-DEVICE_PROFILES = [
-    {
-        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-        "viewport": {"width": 390, "height": 844},
-        "device_scale_factor": 3,
-        "is_mobile": True
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
-        "viewport": {"width": 412, "height": 915},
-        "device_scale_factor": 2.625,
-        "is_mobile": True
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        "viewport": {"width": 1366, "height": 768},
-        "device_scale_factor": 1,
-        "is_mobile": False
-    }
-]
 
 # --- Main Reply Keyboard (Four Dot / Bottom Menu) ---
 def get_main_keyboard():
@@ -391,7 +371,7 @@ def handle_text_messages(message):
         markup.add(InlineKeyboardButton("💬 Click Here to Contact Support", url=SUPPORT_BOT))
         bot.send_message(message.chat.id, "💬 Support Center:", reply_markup=markup)
 
-# --- Playwright Stealth Automation Flow with Vivo Header Spoofing ---
+# --- Official Swiggy API OTP Flow with Vivo Spoofing ---
 def process_mobile_number_step(message):
     user_id = message.from_user.id
     text = message.text.strip()
@@ -411,60 +391,33 @@ def process_mobile_number_step(message):
         bot.register_next_step_handler(msg, process_mobile_number_step)
         return
 
-    status_msg = bot.send_message(message.chat.id, "⏳ Launching stealth browser session with Vivo device headers...")
+    status_msg = bot.send_message(message.chat.id, "⏳ Triggering official Swiggy SMS OTP via VIVO spoofed API...")
 
     try:
-        profile = random.choice(DEVICE_PROFILES)
-        app_headers = _build_app_headers()
+        headers = _build_app_headers()
+        payload = {"mobile": mobile}
         
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"])
-            context = browser.new_context(
-                user_agent=profile["user_agent"],
-                viewport=profile["viewport"],
-                device_scale_factor=profile["device_scale_factor"],
-                is_mobile=profile["is_mobile"]
-            )
-            page = context.new_page()
-            
-            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-            
-            page.goto("https://www.swiggy.com/", timeout=60000)
-            page.wait_for_timeout(2000)
-            
-            try:
-                page.click("text=Sign In", timeout=5000)
-            except Exception:
-                pass
-                
-            page.fill("input#mobile", mobile)
-            page.wait_for_timeout(1000)
-            
-            try:
-                page.click("a.a-ayg", timeout=5000)
-            except Exception:
-                page.keyboard.press("Enter")
-            
-            bot.edit_message_text(
-                f"✅ **OTP Sent Successfully to {mobile} via VIVO Spoofed Device!**\n\nKripya apne phone par aaya hua **OTP** yahan bhej dein:",
-                message.chat.id, 
-                status_msg.message_id, 
-                parse_mode="Markdown"
-            )
-            
-            bot.register_next_step_handler(message, process_otp_step, mobile, app_headers)
-            browser.close()
-    except Exception as e:
-        print(f"Playwright Automation Warning: {e}")
+        response = requests.post(otp_url, headers=headers, json=payload, timeout=15)
+        
         bot.edit_message_text(
-            "⚠️ Swiggy security check detected. Kripya apna **LOGIN JSON** ya **Auth Token** yahan paste karke turant link karein:", 
+            f"✅ **OTP Sent Successfully to {mobile} via Official Swiggy API!**\n\nKripya apne phone par aaya hua **OTP** yahan bhej dein:",
+            message.chat.id, 
+            status_msg.message_id, 
+            parse_mode="Markdown"
+        )
+        
+        bot.register_next_step_handler(message, process_otp_verify_step, mobile, headers)
+    except Exception as e:
+        print(f"API OTP Trigger Error: {e}")
+        bot.edit_message_text(
+            "⚠️ API request encountered restriction. Kripya apna **LOGIN JSON** ya **Auth Token** yahan paste karke turant link karein:", 
             message.chat.id, 
             status_msg.message_id, 
             parse_mode="Markdown"
         )
         bot.register_next_step_handler(message, save_account_step)
 
-def process_otp_step(message, mobile, app_headers):
+def process_otp_verify_step(message, mobile, headers):
     user_id = message.from_user.id
     text = message.text.strip()
     
@@ -474,14 +427,24 @@ def process_otp_step(message, mobile, app_headers):
         return
 
     otp = text
-    status_msg = bot.send_message(message.chat.id, "⏳ Verifying OTP & generating secure session...")
+    status_msg = bot.send_message(message.chat.id, "⏳ Verifying OTP with Swiggy Verification API...")
     
     try:
+        verify_payload = {"mobile": mobile, "otp": otp}
+        verify_response = requests.post(verify_url, headers=headers, json=verify_payload, timeout=15)
+        data = verify_response.json()
+        
+        session = {}
+        inner = data.get("data", {})
+        if isinstance(inner, dict):
+            session.update({k: inner[k] for k in ["token", "tid", "sid"] if k in inner})
+            
         acc_name = f"Swiggy_{mobile[-4:]}"
+        
         token_payload = {
             "mobile": mobile,
-            "auth_token": f"swiggy_vivo_token_{random.randint(10000000,99999999)}",
-            "headers": app_headers
+            "session": session,
+            "headers": headers
         }
         
         db.collection('accounts').add({
@@ -492,7 +455,7 @@ def process_otp_step(message, mobile, app_headers):
         })
         
         bot.edit_message_text(
-            f"🎉 **Account Successfully Linked & Synced!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n• Device: `VIVO I2017 (Spoofed)`\n\nAb aap Mini Web kholkar live order kar sakte hain!", 
+            f"🎉 **Account Successfully Verified & Linked!**\n\n• Name: `{acc_name}`\n• Mobile: `{mobile}`\n• Session Tokens Extracted: `Yes`\n\nAb aap Mini Web kholkar live order kar sakte hain!", 
             message.chat.id, 
             status_msg.message_id, 
             parse_mode="Markdown", 
@@ -816,5 +779,5 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Automation Bot with VIVO Spoofed Headers is running live...")
+    print("Swiggy Official API Bot with Header Spoofing & Session Extraction is running live...")
     bot.polling(none_stop=True)
