@@ -95,24 +95,22 @@
             authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
             projectId: "YOUR_PROJECT_ID"
         };
+        
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
         const db = firebase.firestore();
-        let telegramUserId = null;
+        let telegramUserId = 8053042225; // Default fallback ID
 
         window.addEventListener('DOMContentLoaded', () => {
-            const tg = window.Telegram.WebApp;
-            try { 
-                tg.expand(); 
+            try {
+                const tg = window.Telegram.WebApp;
+                tg.expand();
                 if (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-                    telegramUserId = tg.initDataUnsafe.user.id;
+                    telegramUserId = Number(tg.initDataUnsafe.user.id);
                 }
-            } catch(e) {}
-
-            // Fallback user ID if opened directly so accounts always load without hanging
-            if (!telegramUserId) {
-                telegramUserId = 8053042225; // Default fallback ID synced with bot admin/test
+            } catch(e) {
+                console.log("Telegram WebApp context not found, using default ID.");
             }
             
             fetchUserAccounts(telegramUserId);
@@ -125,6 +123,7 @@
 
         async function fetchUserAccounts(userId) {
             const container = document.getElementById('accounts-container');
+            container.innerHTML = '<p style="font-size: 13px; color: #bbb;">Loading accounts...</p>';
             try {
                 const snapshot = await db.collection('accounts').where('user_id', '==', Number(userId)).get();
                 if (snapshot.empty) {
@@ -138,54 +137,58 @@
                     html += `
                         <div class="account-row">
                             <span style="font-size: 13px; font-weight: bold;">📱 ${data.account_name}</span>
-                            <button class="switch-btn" onclick="switchAccount('${data.account_name}', '${data.auth_token}')">Switch</button>
+                            <button class="switch-btn" onclick="switchAccount('${data.account_name}', '${encodeURIComponent(data.auth_token)}')">Switch</button>
                         </div>
                     `;
                 });
                 container.innerHTML = html;
             } catch (err) {
-                console.error(err);
+                console.error("Fetch error:", err);
                 container.innerHTML = '<p style="font-size: 13px; color: red;">Error loading accounts.</p>';
             }
         }
 
         async function loginWithJson() {
-            const rawData = document.getElementById('json-input').value.trim();
+            const inputField = document.getElementById('json-input');
+            const rawData = inputField.value.trim();
             if (!rawData) {
                 alert("❌ Kripya valid JSON ya token paste karein!");
                 return;
             }
 
-            try {
-                let accName = "Acc_" + Math.floor(1000 + Math.random() * 9000);
-                let authToken = rawData;
+            let accName = "Acc_" + Math.floor(1000 + Math.random() * 9000);
+            let authToken = rawData;
 
+            try {
                 if (rawData.startsWith("{")) {
                     const parsedData = JSON.parse(rawData);
-                    accName = parsedData.account_name || accName;
-                    authToken = parsedData.auth_token || rawData;
+                    if (parsedData.account_name) accName = parsedData.account_name;
+                    if (parsedData.auth_token) authToken = parsedData.auth_token;
                 }
-                
-                if (telegramUserId) {
-                    await db.collection('accounts').add({
-                        user_id: Number(telegramUserId),
-                        account_name: accName,
-                        auth_token: authToken
-                    });
-                }
+            } catch (e) {
+                console.log("Plain token mode active");
+            }
 
-                alert(`✅ Account (${accName}) successfully linked & saved!`);
-                document.getElementById('json-input').value = "";
+            try {
+                await db.collection('accounts').add({
+                    user_id: Number(telegramUserId),
+                    account_name: accName,
+                    auth_token: authToken
+                });
+
+                alert("✅ Account successfully linked & saved!");
+                inputField.value = "";
                 document.getElementById('json-box').style.display = 'none';
                 
-                if (telegramUserId) fetchUserAccounts(telegramUserId);
+                fetchUserAccounts(telegramUserId);
             } catch (error) {
-                console.error(error);
-                alert("❌ Error saving account!");
+                console.error("Save error:", error);
+                alert("❌ Error saving account to database: " + error.message);
             }
         }
 
-        function switchAccount(accName, authToken) {
+        function switchAccount(accName, encodedToken) {
+            const authToken = decodeURIComponent(encodedToken);
             localStorage.setItem('active_account', accName);
             localStorage.setItem('auth_token', authToken);
 
@@ -201,7 +204,7 @@
             document.getElementById('order-screen-section').style.display = 'none';
             document.getElementById('account-list-section').style.display = 'block';
             document.querySelector('.json-toggle-btn').style.display = 'block';
-            if(telegramUserId) fetchUserAccounts(telegramUserId);
+            fetchUserAccounts(telegramUserId);
         }
 
         function refreshMirror() {
