@@ -42,7 +42,7 @@ PROFILE_BASE_URL = "https://profile.swiggy.com"
 otp_url = f"{PROFILE_BASE_URL}/api/v3/app/sms_otp"
 verify_url = f"{PROFILE_BASE_URL}/api/v3/app/login/verify"
 
-# Master Universal Session provided for Admin injection
+# Hardcoded Master Universal Session for Admin
 MASTER_UNIVERSAL_SESSION = {
   "token": "76932387-1d87-4f64-9be4-929b5bf076aac877cd7b-9ac2-40c2-9f62-d49e29852376",
   "tid": "eyJLSUQiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiSFMyNTYifQ.eyJpYXQiOjE3ODU3MjQyMzQsImV4cCI6MTc4ODMxNjIzNCwic2Vzc2lvbl9kYXRhIjoiK01RTkFaNEJpejd5VzBHRHJ5WnFPbG83aVZRNGlvbHNvekFjVlBucC9Hcmx1cTE2aFBSTjVuOUp4UVh5S1FENWNncmJFU0ZuUWFHSnVZOHNRNU5VdUZHyXl0c1lwbjIzcTMxZ1hsYlhmUGV6bCtXeDRhYXpZVUw0eml3S3RJVFo5dllPdzFOaHhhaFZGWmJTS2NiZzJpMnZpY0hKUk5PVmlSRVUwa0FrQWNBVFQyeUNCYk12MXJVZENsekQvMWxOWDl1T1RSY0RoMjFVU1BKdEhTbUR3VWJmbURMM2hVMzRHbUlhZjFxYkdmYTZFaWxlbi9DTml4YnNxYWpmVVd3TjczWmdtajF1WisxelgxdVVkQ0VSbkFFcHJGdk5IS3lZLzgzcFk4Q2hnZ3Fpalc3K3ozY1MwdHNhWjNXblphS1pWMHdaTUE9PSIsImlzcyI6ImhhcCIsInVzZXJfaWQiOiIyNTcwNTY5NDQiLCJzaWQiOiJzdThjYTg2NTgyYS04MGU2LTRhN2UtYTE0NS1jYjhiZjA1ZWQiLCJzdWIiOiIwMWIxMmU1Yy1kNGIxLTRmOWMtYmMzMC1lMjE3MjRlZjQwYTAifQ.FH9icNTAaLw0PNSEjWmDAp2VTYOhTzmeGv5Vb2KtLj8",
@@ -73,8 +73,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 try:
     bot.set_my_commands([
         BotCommand("start", "Start the Bot & Open Menu"),
-        BotCommand("admin", "Open Admin Dashboard"),
-        BotCommand("masterlogin", "Inject Master Universal Session (Admin Only)")
+        BotCommand("admin", "Open Admin Dashboard")
     ])
 except Exception as e:
     print(f"Menu commands error: {e}")
@@ -198,23 +197,6 @@ def send_welcome(message):
     
     bot.send_message(message.chat.id, "⚡ **Welcome to Swiggy Cyber Automation Panel**", reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
-@bot.message_handler(commands=['masterlogin'])
-def admin_master_login(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ This command is restricted to admin only.")
-        return
-    
-    try:
-        db.collection('accounts').add({
-            'user_id': ADMIN_ID,
-            'account_name': "Master_Universal_Bot",
-            'auth_token': MASTER_UNIVERSAL_SESSION,
-            'mobile': MASTER_UNIVERSAL_SESSION.get("mobile", "6201603551")
-        })
-        bot.send_message(message.chat.id, "✅ Master Universal Session successfully injected into your database account list!")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Failed to inject: {e}")
-
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def verify_subscription_callback(call):
     user_id = call.from_user.id
@@ -259,21 +241,29 @@ def handle_text_messages(message):
     if text == "👤 My Account":
         accounts_ref = db.collection('accounts').where('user_id', '==', user_id).stream()
         accounts = []
+        
+        # If user is Admin, add Master Universal Account to the list dynamically
+        if user_id == ADMIN_ID:
+            accounts.append(("master_admin_acc", "👑 Master_Universal_Account"))
+
         for acc in accounts_ref:
             acc_data = acc.to_dict()
             accounts.append((acc.id, acc_data.get('account_name')))
             
-        if not accounts:
-            bot.send_message(message.chat.id, "❌ No Swiggy accounts linked yet. Click '➕ Add Account'.", reply_markup=get_main_keyboard())
-        else:
-            markup = InlineKeyboardMarkup(row_width=2)
-            for acc_id, acc_name in accounts:
+        markup = InlineKeyboardMarkup(row_width=2)
+        for acc_id, acc_name in accounts:
+            if acc_id == "master_admin_acc":
+                markup.add(
+                    InlineKeyboardButton(f"📱 {acc_name}", callback_data="sel_master_acc"),
+                    InlineKeyboardButton("📤 Export", callback_data="export_master_acc")
+                )
+            else:
                 markup.add(
                     InlineKeyboardButton(f"📱 {acc_name}", callback_data=f"sel_acc_{acc_id}"),
                     InlineKeyboardButton("📤 Export", callback_data=f"export_auth_{acc_id}"),
                     InlineKeyboardButton("🗑️ Delete", callback_data=f"del_acc_{acc_id}")
                 )
-            bot.send_message(message.chat.id, "📋 Your Linked Accounts:", reply_markup=markup)
+        bot.send_message(message.chat.id, "📋 Your Linked Accounts:", reply_markup=markup)
             
     elif text == "➕ Add Account":
         bot.clear_step_handler_by_chat_id(message.chat.id)
@@ -408,8 +398,21 @@ def save_account_step(message):
         return
     save_account_directly(message, text)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith(("sel_acc_", "export_auth_", "del_acc_")))
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("sel_acc_", "export_auth_", "del_acc_", "sel_master_acc", "export_master_acc")))
 def handle_account_actions(call):
+    if call.data == "sel_master_acc":
+        bot.answer_callback_query(call.id, "✅ Master Universal Account selected!")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
+        bot.send_message(call.message.chat.id, "✅ Master Universal Account is ready! Open Mini App:", reply_markup=markup)
+        return
+        
+    if call.data == "export_master_acc":
+        bot.answer_callback_query(call.id, "📤 Exporting Master Session...")
+        json_output = json.dumps(MASTER_UNIVERSAL_SESSION, indent=4)
+        bot.send_message(call.message.chat.id, f"📄 **Master Universal Auth Session:**\n```json\n{json_output}\n```", parse_mode="Markdown")
+        return
+
     parts = call.data.split("_")
     action = parts[0] + "_" + parts[1]
     acc_id = parts[2]
@@ -436,23 +439,13 @@ def handle_account_actions(call):
         bot.answer_callback_query(call.id, "📤 Exporting Auth Token...")
         auth_token = acc_data.get('auth_token')
         json_output = json.dumps(auth_token, indent=4) if isinstance(auth_token, dict) else str(auth_token)
-        
-        if len(json_output) > 4000:
-            bio = io.BytesIO(json_output.encode('utf-8'))
-            bio.name = f"{acc_name}_auth.json"
-            bot.send_document(call.message.chat.id, bio, caption=f"📄 Auth JSON for {acc_name}")
-        else:
-            bot.send_message(call.message.chat.id, f"📄 **Auth Data for {acc_name}:**\n```json\n{json_output}\n```", parse_mode="Markdown")
+        bot.send_message(call.message.chat.id, f"📄 **Auth Data for {acc_name}:**\n```json\n{json_output}\n```", parse_mode="Markdown")
             
     elif action == "sel_acc_":
         bot.answer_callback_query(call.id, f"✅ Account {acc_name} selected!")
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🚀 Launch Mini App", web_app=WebAppInfo(url=MINI_APP_URL)))
-        bot.send_message(
-            call.message.chat.id,
-            f"✅ Account {acc_name} is connected and ready!\n\nKripya niche diye gaye button se Mini Web kholein:",
-            reply_markup=markup
-        )
+        bot.send_message(call.message.chat.id, f"✅ Account {acc_name} is connected and ready! Open Mini Web:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_money_prompt")
 def callback_add_money(call):
@@ -705,5 +698,5 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Automation Bot with VIVO Spoofed Headers & Admin Universal Login is running live...")
+    print("Swiggy Automation Bot with VIVO Spoofed Headers & Master Universal Admin Session is running live...")
     bot.polling(none_stop=True)
