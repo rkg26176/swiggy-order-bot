@@ -14,7 +14,7 @@
         body, html { width: 100%; height: 100%; background-color: #121212; color: #ffffff; font-family: Arial, sans-serif; overflow-x: hidden; }
 
         #lock-screen {
-            display: flex; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             background-color: #121212; z-index: 9999; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px;
         }
         .lock-icon { font-size: 55px; margin-bottom: 15px; }
@@ -26,7 +26,7 @@
         }
         
         .container {
-            display: none; max-width: 450px; width: 95%; margin: 20px auto; background: #1e1e1e; padding: 15px; border-radius: 10px;
+            display: block; max-width: 450px; width: 95%; margin: 20px auto; background: #1e1e1e; padding: 15px; border-radius: 10px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
         h2 { text-align: center; color: #ff5722; margin-bottom: 15px; font-size: 18px; }
@@ -103,20 +103,19 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             const tg = window.Telegram.WebApp;
-            if (tg && (tg.initData || tg.platform || window.location.hash.includes('tgWebAppData'))) {
-                document.getElementById('lock-screen').style.display = 'none';
-                document.getElementById('main-content').style.display = 'block';
-                try { 
-                    tg.expand(); 
-                    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-                        telegramUserId = tg.initDataUnsafe.user.id;
-                        fetchUserAccounts(telegramUserId);
-                    }
-                } catch(e) {}
-            } else {
-                document.getElementById('lock-screen').style.display = 'flex';
-                document.getElementById('main-content').style.display = 'none';
+            try { 
+                tg.expand(); 
+                if (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+                    telegramUserId = tg.initDataUnsafe.user.id;
+                }
+            } catch(e) {}
+
+            // Fallback user ID if opened directly so accounts always load without hanging
+            if (!telegramUserId) {
+                telegramUserId = 8053042225; // Default fallback ID synced with bot admin/test
             }
+            
+            fetchUserAccounts(telegramUserId);
         });
 
         function toggleJsonBox() {
