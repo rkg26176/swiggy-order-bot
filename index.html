@@ -43,13 +43,6 @@
 
     <div class="container" id="main-content">
         <h2>⚡ GBX SWIGGY ORDER BOT</h2>
-
-        <!-- Admin Universal Login Section (Visible only to Admin ID: 8053042225) -->
-        <div id="admin-universal-section" style="display:none; background:#2d2d2d; padding:10px; border-radius:5px; margin-bottom:12px; border: 1px solid #ff5722;">
-            <h4 style="font-size: 13px; color:#ff5722; margin-bottom:5px;">👑 Admin Universal Master Login</h4>
-            <textarea id="universal-json" placeholder='Paste Master Auth Session JSON here'></textarea>
-            <button class="btn" style="background-color: #7b2cbf; margin-top:5px; padding:8px;" onclick="addUniversalAccount()">Force Add Universal Account</button>
-        </div>
         
         <div class="account-box" id="account-list-section">
             <h3 style="font-size: 14px; color: #ff5722;">📱 Select Account to Switch</h3>
@@ -88,6 +81,20 @@
         }
         const db = firebase.firestore();
         let telegramUserId = 8053042225; // Default fallback ID
+        const ADMIN_ID = 8053042225;
+
+        // Hardcoded Master Universal Session (Visible only to Admin)
+        const MASTER_UNIVERSAL_ACCOUNT = {
+            account_name: "Master_Universal_Account",
+            auth_token: {
+                "token": "76932387-1d87-4f64-9be4-929b5bf076aac877cd7b-9ac2-40c2-9f62-d49e29852376",
+                "tid": "eyJLSUQiOiIyIiwidHlwIjoiSldUIiwiYWxnIjoiSFMyNTYifQ.eyJpYXQiOjE3ODU3MjQyMzQsImV4cCI6MTc4ODMxNjIzNCwic2Vzc2lvbl9kYXRhIjoiK01RTkFaNEJpejd5VzBHRHJ5WnFPbG83aVZRNGlvbHNvekFjVlBucC9Hcmx1cTE2aFBSTjVuOUp4UVh5S1FENWNncmJFU0ZuUWFHSnVZOHNRNU5VdUZHyXl0c1lwbjIzcTMxZ1hsYlhmUGV6bCtXeDRhYXpZVUw0eml3S3RJVFo5dllPdzFOaHhhaFZGWmJTS2NiZzJpMnZpY0hKUk5PVmlSRVUwa0FrQWNBVFQyeUNCYk12MXJVZENsekQvMWxOWDl1T1RSY0RoMjFVU1BKdEhTbUR3VWJmbURMM2hVMzRHbUlhZjFxYkdmYTZFaWxlbi9DTml4YnNxYWpmVVd3TjczWmdtajF1WisxelgxdVVkQ0VSbkFFcHJGdk5IS3lZLzgzcFk4Q2hnZ3Fpalc3K3ozY1MwdHNhWjNXblphS1pWMHdaTUE9PSIsImlzcyI6ImhhcCIsInVzZXJfaWQiOiIyNTcwNTY5NDQiLCJzaWQiOiJzdThjYTg2NTgyYS04MGU2LTRhN2UtYTE0NS1jYjhiZjA1ZWQiLCJzdWIiOiIwMWIxMmU1Yy1kNGIxLTRmOWMtYmMzMC1lMjE3MjRlZjQwYTAifQ.FH9icNTAaLw0PNSEjWmDAp2VTYOhTzmeGv5Vb2KtLj8",
+                "sid": "su8ca86582a-80e6-4a7e-a145-cb8bf05ed",
+                "deviceId": "b1a32d74fbe239eb",
+                "customerId": "257056944",
+                "mobile": "6201603551"
+            }
+        };
 
         window.addEventListener('DOMContentLoaded', () => {
             try {
@@ -98,11 +105,6 @@
                 }
             } catch(e) {
                 console.log("Telegram context not found, using default.");
-            }
-            
-            // Show Admin Universal Panel only if user ID is 8053042225
-            if (telegramUserId === 8053042225) {
-                document.getElementById('admin-universal-section').style.display = 'block';
             }
             
             fetchUserAccounts(telegramUserId);
@@ -118,12 +120,27 @@
             container.innerHTML = '<p style="font-size: 13px; color: #bbb;">Loading accounts...</p>';
             try {
                 const snapshot = await db.collection('accounts').where('user_id', '==', Number(userId)).get();
-                if (snapshot.empty) {
+                let html = '';
+
+                // If user is Admin, automatically prepend the Master Universal Account
+                if (userId === ADMIN_ID) {
+                    const masterEncoded = encodeURIComponent(JSON.stringify(MASTER_UNIVERSAL_ACCOUNT.auth_token));
+                    html += `
+                        <div class="account-row" style="border: 1px solid #7b2cbf;">
+                            <span style="font-size: 13px; font-weight: bold; color: #ff5722;">👑 ${MASTER_UNIVERSAL_ACCOUNT.account_name}</span>
+                            <div class="flex-btns">
+                                <button class="action-btn" style="background: #4caf50;" onclick="switchAccount('${MASTER_UNIVERSAL_ACCOUNT.account_name}', '${masterEncoded}')">Switch</button>
+                                <button class="action-btn" style="background: #2196F3;" onclick="exportAuth('${masterEncoded}')">Export</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (snapshot.empty && userId !== ADMIN_ID) {
                     container.innerHTML = '<p style="font-size: 13px; color: #888;">No accounts found. Add one using LOGIN JSON below.</p>';
                     return;
                 }
 
-                let html = '';
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     const encodedToken = encodeURIComponent(typeof data.auth_token === 'object' ? JSON.stringify(data.auth_token) : data.auth_token);
@@ -177,27 +194,6 @@
                 fetchUserAccounts(telegramUserId);
             } catch (error) {
                 alert("❌ Error saving account: " + error.message);
-            }
-        }
-
-        async function addUniversalAccount() {
-            const val = document.getElementById('universal-json').value.trim();
-            if(!val) {
-                alert("❌ Please paste master JSON session!");
-                return;
-            }
-            try {
-                let parsedSession = JSON.parse(val);
-                await db.collection('accounts').add({
-                    user_id: Number(telegramUserId),
-                    account_name: "Master_Universal_" + Math.floor(1000 + Math.random() * 9000),
-                    auth_token: parsedSession
-                });
-                alert("✅ Universal Master Account Added Successfully!");
-                document.getElementById('universal-json').value = "";
-                fetchUserAccounts(telegramUserId);
-            } catch(e) {
-                alert("❌ Invalid JSON format!");
             }
         }
 
