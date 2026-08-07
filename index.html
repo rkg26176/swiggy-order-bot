@@ -34,7 +34,7 @@
         }
         .flex-btns { display: flex; gap: 5px; }
         .action-btn { font-size: 11px; padding: 6px 8px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; }
-        .ai-chat-box { height: 120px; background: #1e1e1e; border: 1px solid #444; border-radius: 5px; padding: 8px; overflow-y: auto; font-size: 12px; margin-bottom: 8px; color: #bbb; }
+        .ai-chat-box { height: 120px; background: #1e1e1e; border: 1px solid #444; border-radius: 5px; padding: 8px; overflow-y: auto; font-size: 12px; margin-bottom: 8px; color: #bbb; text-align: left; }
     </style>
 </head>
 <body>
@@ -69,9 +69,9 @@
             <!-- AI Smart Assistant Chat Panel -->
             <div id="ai-box" class="ai-section">
                 <h4 style="font-size: 13px; color: #ff5722; margin-bottom: 5px;">🧠 Gemini Smart AI Agent</h4>
-                <div id="ai-chat-history" class="ai-chat-box">AI: Hello! Main aapka Swiggy AI Assistant hoon. Boliye kya order karna hai ya bill check karna hai?</div>
-                <input type="text" id="ai-user-input" placeholder="Type command (e.g. Add 1 Veg Burger)..." style="width: 100%; background: #1e1e1e; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; font-size: 12px;">
-                <button class="btn" onclick="sendAiCommand()" style="background: #7b2cbf; padding: 8px; margin-top: 5px;">Send to AI</button>
+                <div id="ai-chat-history" class="ai-chat-box">AI: Hello! Main aapka Swiggy AI Assistant hoon. Boliye kya help chahiye?</div>
+                <input type="text" id="ai-user-input" placeholder="Type command (e.g. Add 1 Veg Burger)..." style="width: 100%; background: #1e1e1e; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; font-size: 12px; margin-bottom: 5px;">
+                <button class="btn" onclick="sendAiCommand()" style="background: #7b2cbf; padding: 8px; margin-top: 0;">Send to AI</button>
             </div>
 
             <button class="btn" onclick="placeOrder()" style="background: #ff5722; margin-top:10px;">🚀 Place Order (₹5)</button>
@@ -79,7 +79,11 @@
     </div>
 
     <script>
-        const firebaseConfig = { apiKey: "YOUR_API_KEY", authDomain: "...", projectId: "..." };
+        const firebaseConfig = {
+            apiKey: "YOUR_FIREBASE_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID"
+        };
         if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
         const db = firebase.firestore();
         let telegramUserId = 8053042225;
@@ -218,29 +222,33 @@
             fetchUserAccounts(telegramUserId);
         }
 
-        function sendAiCommand() {
+        // Real Gemini AI Backend Connector
+        async function sendAiCommand() {
             const txt = document.getElementById('ai-user-input').value.trim();
             if(!txt) return;
             const history = document.getElementById('ai-chat-history');
             history.innerHTML += `<br><b>You:</b> ${txt}`;
             document.getElementById('ai-user-input').value = "";
-            
-            // Simulating AI Smart Decision Making Response
-            setTimeout(() => {
-                let aiReply = "AI: Main samajh gaya. Aapke order ke mutabik backend par process kar raha hoon...";
-                if(txt.toLowerCase().includes("bill")) {
-                    aiReply = "AI: Aapka current cart total ₹240 dikha raha hai.";
-                } else if(txt.toLowerCase().includes("add")) {
-                    aiReply = `AI: '${txt}' successfully cart me add kar diya gaya hai!`;
-                }
-                history.innerHTML += `<br><span style="color:#a29bfe"><b>AI:</b> ${aiReply}</span>`;
-                history.scrollTop = history.scrollHeight;
-            }, 800);
+            history.scrollTop = history.scrollHeight;
+
+            try {
+                // Backend Flask server par request bhej rahe hain
+                const response = await fetch('/api/ai-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: txt, account: localStorage.getItem('active_account') })
+                });
+                const data = await response.json();
+                history.innerHTML += `<br><span style="color:#a29bfe"><b>AI:</b> ${data.reply}</span>`;
+            } catch(e) {
+                history.innerHTML += `<br><span style="color:red"><b>AI:</b> Error connecting to backend AI.</span>`;
+            }
+            history.scrollTop = history.scrollHeight;
         }
 
         function placeOrder() {
-            if(confirm("Place order for ₹5 service charge?")) {
-                alert("🚀 Order placed successfully via backend automation!");
+            if(confirm("Place order for ₹5?")) {
+                alert("🚀 Order placed successfully!");
             }
         }
     </script>
