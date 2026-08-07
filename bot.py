@@ -698,5 +698,5 @@ def execute_unblock(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("Swiggy Automation Bot with VIVO Spoofed Headers & Master Universal Admin Session is running live...")
+    print("Swiggy Automation Bot with VIVO Spoofed Headers & AI Assistant is running live...")
     bot.polling(none_stop=True)
