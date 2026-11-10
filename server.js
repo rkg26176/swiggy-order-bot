@@ -127,7 +127,7 @@ bot.on('callback_query', async (query) => {
 });
 
 function sendMainAppLink(chatId) {
-    const webAppUrl = `https://${process.env.RENDER_EXTERNAL_URL || 'localhost:' + PORT}/index.html`;
+    const webAppUrl = `https://swiggy-order-bot-production.up.railway.app/index.html`;
     bot.sendMessage(chatId, 
         `🎉 **Welcome to GBX SWIGGY PRO!**\n\nYour account is fully verified. Click the button below to launch the Swiggy Pro mini app:`, 
         {
@@ -343,4 +343,4 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`[GBX SWIGGY PRO] Backend server running successfully on port ${PORT}`);
-})
+});
