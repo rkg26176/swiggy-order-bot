@@ -2,29 +2,31 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Middleware Setup
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static frontend serve
+// Static frontend serve (आपके सारे HTML, CSS, JS फाइल्स यहाँ से सर्व होंगे)
 app.use(express.static(path.join(__dirname)));
 
-// Swiggy Endpoints
+// Swiggy Auth & OTP Endpoints
 const SMS_OTP_URL = "https://profile.swiggy.com/api/v3/app/sms_otp";
 const VERIFY_URL = "https://profile.swiggy.com/api/v3/app/login/verify";
 
-// Temporary memory for OTP session storage (जैसे आपके फ्लस्क कोड में था)
+// Temporary memory for OTP sessions
 const PENDING_OTP = {};
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
 }
 
-// Standard Swiggy Headers Generator
+// Swiggy Standard Headers
 const getSwiggyHeaders = (deviceId) => {
     const d = deviceId || newDeviceId();
     return {
@@ -48,13 +50,11 @@ const getSwiggyHeaders = (deviceId) => {
     };
 };
 
-
-// ==================== AUTH & OTP ROUTES (Flask के लॉजिक जैसा) ====================
-
+// ==================== OTP SEND ROUTE ====================
 app.post('/api/send_otp', async (req, res) => {
     try {
         const bodyData = req.body || {};
-        const mobile = String(bodyData.mobile || "").strip ? bodyData.mobile.trim().slice(-10) : String(bodyData.mobile || "").slice(-10);
+        const mobile = String(bodyData.mobile || "").trim().slice(-10);
         
         if (mobile.length !== 10) {
             return res.status(400).json({ status: "error", message: "10-digit mobile number required" });
@@ -73,12 +73,14 @@ app.post('/api/send_otp', async (req, res) => {
             device_id: deviceId
         };
 
-        res.json({ status: "success", message: "OTP Sent successfully" });
+        return res.json({ status: "success", message: "OTP Sent successfully" });
     } catch (error) {
-        res.status(500).json({ status: "error", message: error.message });
+        console.error("Send OTP Error:", error.message);
+        return res.status(500).json({ status: "error", message: error.response?.data?.message || error.message });
     }
 });
 
+// ==================== OTP VERIFY ROUTE ====================
 app.post('/api/verify_otp', async (req, res) => {
     try {
         const bodyData = req.body || {};
@@ -111,15 +113,14 @@ app.post('/api/verify_otp', async (req, res) => {
             timeout: 30000
         });
 
-        res.json({ status: "success", data: response.data });
+        return res.json({ status: "success", data: response.data });
     } catch (error) {
-        res.status(500).json({ status: "error", message: error.message });
+        console.error("Verify OTP Error:", error.message);
+        return res.status(500).json({ status: "error", message: error.response?.data?.message || error.message });
     }
 });
 
-
-// ==================== MAPS & DISCOVERY PROXIES (Dynamic lat/lng) ====================
-
+// ==================== MAPS & DISCOVERY PROXIES ====================
 app.get('/address/recommend', async (req, res) => {
     try {
         const { latlng } = req.query;
@@ -175,12 +176,12 @@ app.get('/api/v3/search', async (req, res) => {
     }
 });
 
-// Fallback to frontend index.html
+// SPA Fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Server Listen
+// Start Server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
