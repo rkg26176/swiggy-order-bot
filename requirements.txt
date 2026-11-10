@@ -1,6 +1,0 @@
-pyTelegramBotAPI
-firebase-admin
-qrcode
-Pillow
-flask
-playwright
