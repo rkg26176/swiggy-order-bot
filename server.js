@@ -38,10 +38,9 @@ const CHANNELS = {
 // Global Bot States & Storage
 const PENDING_OTP = {};
 const USER_KEYS = {};
-const ADMIN_IDS = ["123456789"]; // अपने Telegram User ID को यहाँ Admin के रूप में डाल सकते हैं
 let isMaintenanceMode = false;
-const broadcastState = {}; // chatId -> true (waiting for broadcast message)
-const bulkLoginState = {}; // chatId -> true (waiting for json payload)
+const broadcastState = {}; 
+const bulkLoginState = {}; 
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
@@ -54,7 +53,7 @@ function generateUserKey() {
     return `SWG-${part1}-${part2}-${part3}`;
 }
 
-// Swiggy Standard Headers
+// Swiggy Standard Headers (Direct Connection)
 const getSwiggyHeaders = (deviceId) => {
     const d = deviceId || newDeviceId();
     return {
@@ -106,7 +105,9 @@ async function sendMainMenu(chatId, userId) {
         USER_KEYS[userId] = generateUserKey();
     }
     const userKey = USER_KEYS[userId];
-    const webAppUrl = `https://storelex.store/swiggy_web/?key=${userKey}`;
+    
+    // Correct Railway Mini Web App URL with User Key
+    const webAppUrl = `https://swiggy-order-bot-production.up.railway.app/?key=${userKey}`;
 
     const welcomeMessage = `✨ **WELCOME TO GBX SWIGGY PRO ORDER BOT!**\n\n` +
         `🚀 **YOU CAN USE WEB MINI FOR ORDERS.**\n\n` +
@@ -121,10 +122,10 @@ async function sendMainMenu(chatId, userId) {
                     { text: "📥 BULK EXPORT", callback_data: "bulk_export" }
                 ],
                 [
-                    { text: "🌐 OPEN GBX SWIGGY PRO", url: webAppUrl } // Green Open Button styling handled via WebApp/URL
+                    { text: "🟢 OPEN GBX SWIGGY PRO", web_app: { url: webAppUrl } }
                 ],
                 [
-                    { text: "💬 SUPPORT", url: "https://t.me/gbx_support_bot" }, // Red Support Button
+                    { text: "🔴 SUPPORT", url: "https://t.me/gbx_support_bot" },
                     { text: "🏆 LEADERBOARD", callback_data: "leaderboard" }
                 ]
             ]
@@ -177,9 +178,6 @@ bot.onText(/\/key/, async (msg) => {
 
 bot.onText(/\/adminhelp/, async (msg) => {
     const chatId = msg.chat.id;
-    const userId = String(msg.from.id);
-
-    // Optional admin check (you can remove condition if anyone can access)
     const maintenanceText = isMaintenanceMode ? "🛑 CANCEL MAINTENANCE" : "🛠️ SHOW AS MAINTENANCE";
 
     await bot.sendMessage(chatId, `🛡️ **GBX ADMIN CONTROL PANEL**`, {
@@ -206,7 +204,6 @@ bot.on('message', async (msg) => {
             return;
         }
         await bot.sendMessage(chatId, "📢 Broadcast initiated to network users...");
-        // Broadcast logic simulation
         await bot.sendMessage(chatId, `✅ Broadcast sent successfully:\n\n${text}`);
         return;
     }
@@ -221,7 +218,7 @@ bot.on('message', async (msg) => {
             const parsed = JSON.parse(text);
             await bot.sendMessage(chatId, "✅ Bulk JSON imported successfully into your Web Mini session storage!");
         } catch (e) {
-            await bot.sendMessage(chatId, "❌ Invalid JSON format. Please send valid session JSON lines.");
+            await bot.sendMessage(chatId, "❌ Invalid JSON format. Please send valid session JSON.");
         }
         return;
     }
@@ -272,7 +269,6 @@ bot.on('callback_query', async (query) => {
         await bot.sendMessage(chatId, "📦 **BULK LOGIN:**\n\nPlease paste your session JSON data below (or type `cancel` to abort):");
     } else if (data === "bulk_export") {
         bot.answerCallbackQuery(query.id, { text: "Exporting active sessions..." });
-        // Simulating session json export
         const mockExportJson = JSON.stringify({
             mobile: "9876543210",
             token: "sample_token_extracted",
