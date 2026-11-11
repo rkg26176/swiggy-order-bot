@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static frontend serve (आपके सारे HTML, CSS, JS फाइल्स यहाँ से सर्व होंगे)
+// Static frontend serve
 app.use(express.static(path.join(__dirname)));
 
 // Swiggy Auth & OTP Endpoints
