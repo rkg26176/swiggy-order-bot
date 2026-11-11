@@ -3,9 +3,14 @@ const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Telegram Bot Setup
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8813624728:AAHxIFtVwuq_6rcPJf9a9tAhnaJa6JS_ivg';
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // Middleware Setup
 app.use(cors());
@@ -49,6 +54,22 @@ const getSwiggyHeaders = (deviceId) => {
         "accept-language": "en-IN,en-US;q=0.9,en;q=0.8"
     };
 };
+
+// ==================== TELEGRAM BOT LISTENERS ====================
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    // Render या लोकल होस्ट के हिसाब से अपने ऐप का URL सेट कर लें
+    const appUrl = process.env.RENDER_EXTERNAL_URL || `https://${msg.from?.username ? 'swiggy-order-bot.onrender.com' : 'localhost:' + PORT}`;
+    
+    bot.sendMessage(chatId, "✨ **Swiggy PRO** ऐप में आपका स्वागत है! नीचे दिए गए बटन पर क्लिक करके ऐप खोलें:", {
+        parse_mode: "Markdown",
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "🚀 Open Swiggy Pro App", web_app: { url: `https://storelex.store/swiggy_web/` } }]
+            ]
+        }
+    });
+});
 
 // ==================== OTP SEND ROUTE ====================
 app.post('/api/send_otp', async (req, res) => {
