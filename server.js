@@ -12,13 +12,6 @@ const PORT = process.env.PORT || 3000;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8813624728:AAHxIFtVwuq_6rcPJf9a9tAhnaJa6JS_ivg';
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
-// Set Bot Menu Commands (Left-side Menu)
-bot.setMyCommands([
-    { command: 'start', description: 'Reset the bot' },
-    { command: 'key', description: 'Get your access key' },
-    { command: 'adminhelp', description: 'Admin commands' }
-]).catch(() => {});
-
 // Middleware Setup
 app.use(cors());
 app.use(express.json());
@@ -27,33 +20,18 @@ app.use(express.urlencoded({ extended: true }));
 // Static frontend serve
 app.use(express.static(path.join(__dirname)));
 
-// Force Subscribe Channels Dictionary
-const CHANNELS = {
-    "-1003332858806": { "name": "📢 GBX LOOT", "url": "https://t.me/+6ByfGDRBKgsxMjZl" },
-    "-1003630519339": { "name": "📢 GBX EARN", "url": "https://t.me/+OWrCoeF-JutmNjg1" },
-    "-1003197501531": { "name": "📢 GBX ZONE", "url": "https://t.me/+f2mWfDs6EUIxYTBl" },
-    "-1003862251237": { "name": "💬 Join Group Chat (GC)", "url": "https://t.me/+O_-kEF2f5f1kMjdl" }
-};
+// Swiggy Auth & OTP Endpoints
+const SMS_OTP_URL = "https://profile.swiggy.com/api/v3/app/sms_otp";
+const VERIFY_URL = "https://profile.swiggy.com/api/v3/app/login/verify";
 
-// Global Bot States & Storage
+// Temporary memory for OTP sessions
 const PENDING_OTP = {};
-const USER_KEYS = {};
-let isMaintenanceMode = false;
-const broadcastState = {}; 
-const bulkLoginState = {}; 
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
 }
 
-function generateUserKey() {
-    const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
-    const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
-    const part3 = crypto.randomBytes(3).toString('hex').toUpperCase();
-    return `SWG-${part1}-${part2}-${part3}`;
-}
-
-// Swiggy Standard Headers (Direct Connection)
+// Swiggy Standard Headers
 const getSwiggyHeaders = (deviceId) => {
     const d = deviceId || newDeviceId();
     return {
@@ -77,221 +55,20 @@ const getSwiggyHeaders = (deviceId) => {
     };
 };
 
-// Helper: Check unjoined channels
-async function getUnjoinedChannels(userId) {
-    const unjoined = {};
-    for (const [channelId, info] of Object.entries(CHANNELS)) {
-        try {
-            const member = await bot.getChatMember(channelId, userId);
-            const status = member.status;
-            if (['left', 'kicked', 'restricted'].includes(status)) {
-                unjoined[channelId] = info;
-            }
-        } catch (err) {
-            unjoined[channelId] = info;
-        }
-    }
-    return unjoined;
-}
-
-// Send Main Menu
-async function sendMainMenu(chatId, userId) {
-    if (isMaintenanceMode) {
-        await bot.sendMessage(chatId, "🛠️ **GBX SWIGGY PRO IS CURRENTLY UNDER MAINTENANCE!**\n\nPlease check back later.", { parse_mode: "Markdown" });
-        return;
-    }
-
-    if (!USER_KEYS[userId]) {
-        USER_KEYS[userId] = generateUserKey();
-    }
-    const userKey = USER_KEYS[userId];
+// ==================== TELEGRAM BOT LISTENERS ====================
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    // Render या लोकल होस्ट के हिसाब से अपने ऐप का URL सेट कर लें
+    const appUrl = process.env.RENDER_EXTERNAL_URL || `https://${msg.from?.username ? 'swiggy-order-bot.onrender.com' : 'localhost:' + PORT}`;
     
-    // Correct Railway Mini Web App URL with User Key
-    const webAppUrl = `https://swiggy-order-bot-production.up.railway.app/?key=${userKey}`;
-
-    const welcomeMessage = `✨ **WELCOME TO GBX SWIGGY PRO ORDER BOT!**\n\n` +
-        `🚀 **YOU CAN USE WEB MINI FOR ORDERS.**\n\n` +
-        `🔑 **KEY : \`${userKey}\`**`;
-
-    await bot.sendMessage(chatId, welcomeMessage, {
+    bot.sendMessage(chatId, "✨ **Swiggy PRO** ऐप में आपका स्वागत है! नीचे दिए गए बटन पर क्लिक करके ऐप खोलें:", {
         parse_mode: "Markdown",
         reply_markup: {
             inline_keyboard: [
-                [
-                    { text: "📦 BULK LOGIN", callback_data: "bulk_login" },
-                    { text: "📥 BULK EXPORT", callback_data: "bulk_export" }
-                ],
-                [
-                    { text: "🟢 OPEN GBX SWIGGY PRO", web_app: { url: webAppUrl } }
-                ],
-                [
-                    { text: "🔴 SUPPORT", url: "https://t.me/gbx_support_bot" },
-                    { text: "🏆 LEADERBOARD", callback_data: "leaderboard" }
-                ]
+                [{ text: "🚀 Open Swiggy Pro App", web_app: { url: `https://storelex.store/swiggy_web/` } }]
             ]
         }
     });
-}
-
-// Send Force Subscribe Prompt
-async function sendForceSubPrompt(chatId, userId) {
-    const unjoined = await getUnjoinedChannels(userId);
-    const unjoinedKeys = Object.keys(unjoined);
-
-    if (unjoinedKeys.length === 0) {
-        await sendMainMenu(chatId, userId);
-        return;
-    }
-
-    let keyboard = [];
-    for (const info of Object.values(unjoined)) {
-        keyboard.push([{ text: info.name, url: info.url }]);
-    }
-    keyboard.push([{ text: "🔄 VERIFY JOIN", callback_data: "verify_join" }]);
-
-    const promptMsg = `⚠️ **Please join our update channels & group to use GBX Swiggy Pro Bot:**\n\n` +
-        `After joining all channels, click the **VERIFY JOIN** button below.`;
-
-    await bot.sendMessage(chatId, promptMsg, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: keyboard }
-    });
-}
-
-// ==================== TELEGRAM BOT COMMANDS & HANDLERS ====================
-bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    broadcastState[chatId] = false;
-    bulkLoginState[chatId] = false;
-    await sendForceSubPrompt(chatId, userId);
-});
-
-bot.onText(/\/key/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    if (!USER_KEYS[userId]) {
-        USER_KEYS[userId] = generateUserKey();
-    }
-    await bot.sendMessage(chatId, `🔑 Your Access Key is: \`${USER_KEYS[userId]}\``, { parse_mode: "Markdown" });
-});
-
-bot.onText(/\/adminhelp/, async (msg) => {
-    const chatId = msg.chat.id;
-    const maintenanceText = isMaintenanceMode ? "🛑 CANCEL MAINTENANCE" : "🛠️ SHOW AS MAINTENANCE";
-
-    await bot.sendMessage(chatId, `🛡️ **GBX ADMIN CONTROL PANEL**`, {
-        parse_mode: "Markdown",
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: "📢 BROADCAST", callback_data: "admin_broadcast" }],
-                [{ text: maintenanceText, callback_data: "admin_toggle_maintenance" }]
-            ]
-        }
-    });
-});
-
-// Handle text inputs for Broadcast / Bulk Login
-bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const text = msg.text;
-    if (!text || text.startsWith('/')) return;
-
-    if (broadcastState[chatId]) {
-        broadcastState[chatId] = false;
-        if (text.toLowerCase() === 'cancel') {
-            await bot.sendMessage(chatId, "❌ Broadcast cancelled.");
-            return;
-        }
-        await bot.sendMessage(chatId, "📢 Broadcast initiated to network users...");
-        await bot.sendMessage(chatId, `✅ Broadcast sent successfully:\n\n${text}`);
-        return;
-    }
-
-    if (bulkLoginState[chatId]) {
-        bulkLoginState[chatId] = false;
-        if (text.toLowerCase() === 'cancel') {
-            await bot.sendMessage(chatId, "❌ Bulk Login cancelled.");
-            return;
-        }
-        try {
-            const parsed = JSON.parse(text);
-            await bot.sendMessage(chatId, "✅ Bulk JSON imported successfully into your Web Mini session storage!");
-        } catch (e) {
-            await bot.sendMessage(chatId, "❌ Invalid JSON format. Please send valid session JSON.");
-        }
-        return;
-    }
-});
-
-// Handle Callbacks
-bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-    const messageId = query.message.message_id;
-    const data = query.data;
-
-    if (data === "verify_join") {
-        const unjoined = await getUnjoinedChannels(userId);
-        if (Object.keys(unjoined).length > 0) {
-            bot.answerCallbackQuery(query.id, { text: "❌ You have not joined all channels yet!", show_alert: true });
-        } else {
-            bot.answerCallbackQuery(query.id, { text: "✅ Verified successfully!" });
-            try { await bot.deleteMessage(chatId, messageId); } catch(e) {}
-            await sendMainMenu(chatId, userId);
-        }
-    } else if (data === "leaderboard") {
-        bot.answerCallbackQuery(query.id, { text: "Opening Leaderboard..." });
-        const leaderboardText = `🏆 **GBX SWIGGY PRO - LEADERBOARD** 🏆\n\n` +
-            `1. 🥇 Rounak Kr - 142 Orders (₹12,400 Saved)\n` +
-            `2. 🥈 Amit - 118 Orders (₹9,850 Saved)\n` +
-            `3. 🥉 Rahul - 95 Orders (₹7,200 Saved)\n` +
-            `4. 👤 Omm - 74 Orders (₹5,600 Saved)\n\n` +
-            `_Updated live from the network cluster._`;
-
-        await bot.editMessageText(leaderboardText, {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: "Markdown",
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: "🔙 BACK TO MENU", callback_data: "back_to_menu" }]
-                ]
-            }
-        });
-    } else if (data === "back_to_menu") {
-        bot.answerCallbackQuery(query.id);
-        try { await bot.deleteMessage(chatId, messageId); } catch(e) {}
-        await sendMainMenu(chatId, userId);
-    } else if (data === "bulk_login") {
-        bot.answerCallbackQuery(query.id);
-        bulkLoginState[chatId] = true;
-        await bot.sendMessage(chatId, "📦 **BULK LOGIN:**\n\nPlease paste your session JSON data below (or type `cancel` to abort):");
-    } else if (data === "bulk_export") {
-        bot.answerCallbackQuery(query.id, { text: "Exporting active sessions..." });
-        const mockExportJson = JSON.stringify({
-            mobile: "9876543210",
-            token: "sample_token_extracted",
-            deviceId: newDeviceId()
-        }, null, 2);
-        await bot.sendMessage(chatId, `📥 **BULK EXPORTED SESSIONS:**\n\n\`\`\`json\n${mockExportJson}\n\`\`\``, { parse_mode: "Markdown" });
-    } else if (data === "admin_broadcast") {
-        bot.answerCallbackQuery(query.id);
-        broadcastState[chatId] = true;
-        await bot.sendMessage(chatId, "📢 **BROADCAST MODE:**\n\nSend the message you want to broadcast, or type `cancel`.");
-    } else if (data === "admin_toggle_maintenance") {
-        isMaintenanceMode = !isMaintenanceMode;
-        const statusText = isMaintenanceMode ? "ENABLED 🛑" : "DISABLED ✅";
-        bot.answerCallbackQuery(query.id, { text: `Maintenance mode: ${statusText}` });
-        
-        const maintenanceText = isMaintenanceMode ? "🛑 CANCEL MAINTENANCE" : "🛠️ SHOW AS MAINTENANCE";
-        await bot.editMessageReplyMarkup({
-            inline_keyboard: [
-                [{ text: "📢 BROADCAST", callback_data: "admin_broadcast" }],
-                [{ text: maintenanceText, callback_data: "admin_toggle_maintenance" }]
-            ]
-        }, { chat_id: chatId, message_id: messageId });
-    }
 });
 
 // ==================== OTP SEND ROUTE ====================
