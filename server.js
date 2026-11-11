@@ -20,15 +20,31 @@ app.use(express.urlencoded({ extended: true }));
 // Static frontend serve
 app.use(express.static(path.join(__dirname)));
 
+// Force Subscribe Channels Dictionary
+const CHANNELS = {
+    "-1003332858806": { "name": "📢 GBX LOOT", "url": "https://t.me/+6ByfGDRBKgsxMjZl" },
+    "-1003630519339": { "name": "📢 GBX EARN", "url": "https://t.me/+OWrCoeF-JutmNjg1" },
+    "-1003197501531": { "name": "📢 GBX ZONE", "url": "https://t.me/+f2mWfDs6EUIxYTBl" },
+    "-1003862251237": { "name": "💬 Join Group Chat (GC)", "url": "https://t.me/+O_-kEF2f5f1kMjdl" }
+};
+
 // Swiggy Auth & OTP Endpoints
 const SMS_OTP_URL = "https://profile.swiggy.com/api/v3/app/sms_otp";
 const VERIFY_URL = "https://profile.swiggy.com/api/v3/app/login/verify";
 
-// Temporary memory for OTP sessions
+// Temporary memory for sessions & User Keys
 const PENDING_OTP = {};
+const USER_KEYS = {};
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
+}
+
+function generateUserKey() {
+    const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const part3 = crypto.randomBytes(3).toString('hex').toUpperCase();
+    return `SWG-${part1}-${part2}-${part3}`;
 }
 
 // Swiggy Standard Headers
@@ -55,20 +71,117 @@ const getSwiggyHeaders = (deviceId) => {
     };
 };
 
-// ==================== TELEGRAM BOT LISTENERS ====================
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    // Render या लोकल होस्ट के हिसाब से अपने ऐप का URL सेट कर लें
-    const appUrl = process.env.RENDER_EXTERNAL_URL || `https://${msg.from?.username ? 'swiggy-order-bot.onrender.com' : 'localhost:' + PORT}`;
-    
-    bot.sendMessage(chatId, "✨ **Swiggy PRO** ऐप में आपका स्वागत है! नीचे दिए गए बटन पर क्लिक करके ऐप खोलें:", {
+// Helper: Check which channels the user has NOT joined yet
+async function getUnjoinedChannels(userId) {
+    const unjoined = {};
+    for (const [channelId, info] of Object.entries(CHANNELS)) {
+        try {
+            const member = await bot.getChatMember(channelId, userId);
+            const status = member.status;
+            // If user left, kicked, or not a member/creator/administrator
+            if (['left', 'kicked', 'restricted'].includes(status)) {
+                unjoined[channelId] = info;
+            }
+        } catch (err) {
+            // If bot is not admin or cannot check, treat as unjoined to be safe, or skip
+            unjoined[channelId] = info;
+        }
+    }
+    return unjoined;
+}
+
+// Send Main Menu (When joined all channels)
+async function sendMainMenu(chatId, userId) {
+    if (!USER_KEYS[userId]) {
+        USER_KEYS[userId] = generateUserKey();
+    }
+    const userKey = USER_KEYS[userId];
+    const webAppUrl = `https://storelex.store/swiggy_web/?key=${userKey}`;
+
+    const welcomeMessage = `✨ **WELCOME TO GBX SWIGGY PRO ORDER BOT!**\n\n` +
+        `🚀 **YOU CAN USE WEB MINI FOR ORDERS.**\n\n` +
+        `🔑 **KEY : \`${userKey}\`**`;
+
+    await bot.sendMessage(chatId, welcomeMessage, {
         parse_mode: "Markdown",
         reply_markup: {
             inline_keyboard: [
-                [{ text: "🚀 Open Swiggy Pro App", web_app: { url: `https://storelex.store/swiggy_web/` } }]
+                [
+                    { text: "📦 BULK LOGIN", callback_data: "bulk_login" },
+                    { text: "📥 BULK EXPORT", callback_data: "bulk_export" }
+                ],
+                [
+                    { text: "🌐 OPEN GBX SWIGGY PRO", web_app: { url: webAppUrl } }
+                ],
+                [
+                    { text: "💬 SUPPORT", url: "https://t.me/gbx_support_bot" },
+                    { text: "🏆 LEADERBOARD", callback_data: "leaderboard" }
+                ]
             ]
         }
     });
+}
+
+// Send Force Subscribe Prompt
+async function sendForceSubPrompt(chatId, userId) {
+    const unjoined = await getUnjoinedChannels(userId);
+    const unjoinedKeys = Object.keys(unjoined);
+
+    if (unjoinedKeys.length === 0) {
+        // All joined, show main menu
+        await sendMainMenu(chatId, userId);
+        return;
+    }
+
+    let keyboard = [];
+    for (const info of Object.values(unjoined)) {
+        keyboard.push([{ text: info.name, url: info.url }]);
+    }
+    // Add Verify button
+    keyboard.push([{ text: "🔄 VERIFY JOIN", callback_data: "verify_join" }]);
+
+    const promptMsg = `⚠️ **Please join our update channels & group to use GBX Swiggy Pro Bot:**\n\n` +
+        `After joining all channels, click the **VERIFY JOIN** button below.`;
+
+    await bot.sendMessage(chatId, promptMsg, {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: keyboard }
+    });
+}
+
+// ==================== TELEGRAM BOT LISTENERS ====================
+bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    await sendForceSubPrompt(chatId, userId);
+});
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+
+    if (data === "verify_join") {
+        const unjoined = await getUnjoinedChannels(userId);
+        if (Object.keys(unjoined).length > 0) {
+            bot.answerCallbackQuery(query.id, { text: "❌ You have not joined all channels yet!", show_alert: true });
+        } else {
+            bot.answerCallbackQuery(query.id, { text: "✅ Verified successfully!" });
+            try {
+                await bot.deleteMessage(chatId, query.message.message_id);
+            } catch(e) {}
+            await sendMainMenu(chatId, userId);
+        }
+    } else if (data === "bulk_login") {
+        bot.answerCallbackQuery(query.id, { text: "Bulk Login feature is active via Web App." });
+        bot.sendMessage(chatId, "📦 **Bulk Login:** Please open the Web App to manage and login multiple accounts securely.");
+    } else if (data === "bulk_export") {
+        bot.answerCallbackQuery(query.id, { text: "Bulk Export feature is ready." });
+        bot.sendMessage(chatId, "📥 **Bulk Export:** You can export your session JSON directly from the accounts tab inside the Web App.");
+    } else if (data === "leaderboard") {
+        bot.answerCallbackQuery(query.id, { text: "Loading Leaderboard..." });
+        bot.sendMessage(chatId, "🏆 **GBX Leaderboard:** Top order placers of this week are active in the network!");
+    }
 });
 
 // ==================== OTP SEND ROUTE ====================
