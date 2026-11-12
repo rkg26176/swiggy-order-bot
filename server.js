@@ -4,6 +4,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,15 +21,37 @@ app.use(express.urlencoded({ extended: true }));
 // Static frontend serve
 app.use(express.static(path.join(__dirname)));
 
+// Force Subscribe Channels Dictionary
+const CHANNELS = {
+    "-1003332858806": { "name": "📢 GBX LOOT", "url": "https://t.me/+6ByfGDRBKgsxMjZl" },
+    "-1003630519339": { "name": "📢 GBX EARN", "url": "https://t.me/+OWrCoeF-JutmNjg1" },
+    "-1003197501531": { "name": "📢 GBX ZONE", "url": "https://t.me/+f2mWfDs6EUIxYTBl" },
+    "-1003862251237": { "name": "💬 Join Group Chat (GC)", "url": "https://t.me/+O_-kEF2f5f1kMjdl" }
+};
+
 // Swiggy Auth & OTP Endpoints
 const SMS_OTP_URL = "https://profile.swiggy.com/api/v3/app/sms_otp";
 const VERIFY_URL = "https://profile.swiggy.com/api/v3/app/login/verify";
 
-// Temporary memory for OTP sessions
+// Temporary memory for sessions, user keys & live orders
 const PENDING_OTP = {};
+const USER_KEYS = {};
+let liveOrders = []; // असली ऑर्डर्स स्टोर करने के लिए
+
+// Optional Proxy Configuration (आप चाहें तो अपनी प्रॉक्सी यहाँ सेट कर सकते हैं)
+// फॉर्मेट: http://username:password@ip:port
+const PROXY_URL = process.env.PROXY_URL || ""; 
+const agent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
+}
+
+function generateUserKey() {
+    const part1 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const part2 = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const part3 = crypto.randomBytes(3).toString('hex').toUpperCase();
+    return `SWG-${part1}-${part2}-${part3}`;
 }
 
 // Swiggy Standard Headers
@@ -55,20 +78,122 @@ const getSwiggyHeaders = (deviceId) => {
     };
 };
 
-// ==================== TELEGRAM BOT LISTENERS ====================
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    // Render या लोकल होस्ट के हिसाब से अपने ऐप का URL सेट कर लें
-    const appUrl = process.env.RENDER_EXTERNAL_URL || `https://${msg.from?.username ? 'swiggy-order-bot.onrender.com' : 'localhost:' + PORT}`;
-    
-    bot.sendMessage(chatId, "✨ **Swiggy PRO** ऐप में आपका स्वागत है! नीचे दिए गए बटन पर क्लिक करके ऐप खोलें:", {
+// Helper: Axios config with optional Proxy
+const getAxiosConfig = (headers) => {
+    const config = { headers, timeout: 30000 };
+    if (agent) {
+        config.httpsAgent = agent;
+    }
+    return config;
+};
+
+// Helper: Check which channels the user has NOT joined yet
+async function getUnjoinedChannels(userId) {
+    const unjoined = {};
+    for (const [channelId, info] of Object.entries(CHANNELS)) {
+        try {
+            const member = await bot.getChatMember(channelId, userId);
+            const status = member.status;
+            if (['left', 'kicked', 'restricted'].includes(status)) {
+                unjoined[channelId] = info;
+            }
+        } catch (err) {
+            unjoined[channelId] = info;
+        }
+    }
+    return unjoined;
+}
+
+// Send Main Menu (When joined all channels)
+async function sendMainMenu(chatId, userId) {
+    if (!USER_KEYS[userId]) {
+        USER_KEYS[userId] = generateUserKey();
+    }
+    const userKey = USER_KEYS[userId];
+    const webAppUrl = `https://storelex.store/swiggy_web/?key=${userKey}`;
+
+    const welcomeMessage = `✨ **WELCOME TO GBX SWIGGY PRO ORDER BOT!**\n\n` +
+        `🚀 **YOU CAN USE WEB MINI FOR ORDERS.**\n\n` +
+        `🔑 **KEY : \`${userKey}\`**`;
+
+    await bot.sendMessage(chatId, welcomeMessage, {
         parse_mode: "Markdown",
         reply_markup: {
             inline_keyboard: [
-                [{ text: "🚀 Open Swiggy Pro App", web_app: { url: `https://storelex.store/swiggy_web/` } }]
+                [
+                    { text: "📦 BULK LOGIN", callback_data: "bulk_login" },
+                    { text: "📥 BULK EXPORT", callback_data: "bulk_export" }
+                ],
+                [
+                    { text: "🌐 OPEN GBX SWIGGY PRO", web_app: { url: webAppUrl } }
+                ],
+                [
+                    { text: "💬 SUPPORT", url: "https://t.me/gbx_support_bot" },
+                    { text: "📊 LIVE ORDERS", callback_data: "view_orders" }
+                ]
             ]
         }
     });
+}
+
+// Send Force Subscribe Prompt
+async function sendForceSubPrompt(chatId, userId) {
+    const unjoined = await getUnjoinedChannels(userId);
+    const unjoinedKeys = Object.keys(unjoined);
+
+    if (unjoinedKeys.length === 0) {
+        await sendMainMenu(chatId, userId);
+        return;
+    }
+
+    let keyboard = [];
+    for (const info of Object.values(unjoined)) {
+        keyboard.push([{ text: info.name, url: info.url }]);
+    }
+    keyboard.push([{ text: "🔄 VERIFY JOIN", callback_data: "verify_join" }]);
+
+    const promptMsg = `⚠️ **Please join our update channels & group to use GBX Swiggy Pro Bot:**\n\n` +
+        `After joining all channels, click the **VERIFY JOIN** button below.`;
+
+    await bot.sendMessage(chatId, promptMsg, {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: keyboard }
+    });
+}
+
+// ==================== TELEGRAM BOT LISTENERS ====================
+bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    await sendForceSubPrompt(chatId, userId);
+});
+
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const userId = query.from.id;
+    const data = query.data;
+
+    if (data === "verify_join") {
+        const unjoined = await getUnjoinedChannels(userId);
+        if (Object.keys(unjoined).length > 0) {
+            bot.answerCallbackQuery(query.id, { text: "❌ You have not joined all channels yet!", show_alert: true });
+        } else {
+            bot.answerCallbackQuery(query.id, { text: "✅ Verified successfully!" });
+            try {
+                await bot.deleteMessage(chatId, query.message.message_id);
+            } catch(e) {}
+            await sendMainMenu(chatId, userId);
+        }
+    } else if (data === "bulk_login") {
+        bot.answerCallbackQuery(query.id, { text: "Bulk Login active via Web App." });
+        bot.sendMessage(chatId, "📦 **Bulk Login:** Please open the Web App to manage multiple accounts securely.");
+    } else if (data === "bulk_export") {
+        bot.answerCallbackQuery(query.id, { text: "Bulk Export ready." });
+        bot.sendMessage(chatId, "📥 **Bulk Export:** Export your session JSON directly from the accounts tab inside the Web App.");
+    } else if (data === "view_orders") {
+        bot.answerCallbackQuery(query.id, { text: "Fetching Live Orders..." });
+        bot.sendMessage(chatId, `📊 **Live Orders Count:** ${liveOrders.length} active in system.`);
+    }
 });
 
 // ==================== OTP SEND ROUTE ====================
@@ -82,10 +207,7 @@ app.post('/api/send_otp', async (req, res) => {
         }
 
         const deviceId = newDeviceId();
-        const response = await axios.get(`${SMS_OTP_URL}?mobile=${mobile}`, {
-            headers: getSwiggyHeaders(deviceId),
-            timeout: 30000
-        });
+        const response = await axios.get(`${SMS_OTP_URL}?mobile=${mobile}`, getAxiosConfig(getSwiggyHeaders(deviceId)));
 
         const resData = response.data || {};
         PENDING_OTP[mobile] = {
@@ -129,10 +251,7 @@ app.post('/api/verify_otp', async (req, res) => {
             "otp": otp
         };
 
-        const response = await axios.post(`${VERIFY_URL}?otp_source=Sms-automatic`, p, {
-            headers: h,
-            timeout: 30000
-        });
+        const response = await axios.post(`${VERIFY_URL}?otp_source=Sms-automatic`, p, getAxiosConfig(h));
 
         return res.json({ status: "success", data: response.data });
     } catch (error) {
@@ -141,15 +260,35 @@ app.post('/api/verify_otp', async (req, res) => {
     }
 });
 
+// ==================== ORDERS API (फिक्स किया गया) ====================
+app.get('/api/orders', (req, res) => {
+    res.json({
+        totalOrders: liveOrders.length,
+        activeSessions: Object.keys(USER_KEYS).length,
+        orders: liveOrders
+    });
+});
+
+app.post('/api/new-order', (req, res) => {
+    const { orderId, userId, items, amount } = req.body;
+    const newOrder = {
+        id: orderId || `SWG-${Date.now()}`,
+        userId: userId || 'Direct',
+        items: items || 'Custom Order',
+        amount: amount || 0,
+        status: 'Processing'
+    };
+    liveOrders.unshift(newOrder);
+    res.json({ success: true, order: newOrder });
+});
+
 // ==================== MAPS & DISCOVERY PROXIES ====================
 app.get('/address/recommend', async (req, res) => {
     try {
         const { latlng } = req.query;
         if (!latlng) return res.status(400).json({ error: "latlng is required" });
 
-        const response = await axios.get(`https://maps.swiggy.com/address/recommend?latlng=${latlng}`, {
-            headers: getSwiggyHeaders(req.headers['deviceid'])
-        });
+        const response = await axios.get(`https://maps.swiggy.com/address/recommend?latlng=${latlng}`, getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])));
         res.json(response.data);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -162,8 +301,8 @@ app.get('/api/v2/food', async (req, res) => {
         if (!lat || !lng) return res.status(400).json({ error: "lat and lng are required" });
 
         const response = await axios.get(`https://disc.swiggy.com/api/v2/food`, {
-            params: { lat, lng, isTopNavEntry: isTopNavEntry || 'true' },
-            headers: getSwiggyHeaders(req.headers['deviceid'])
+            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
+            params: { lat, lng, isTopNavEntry: isTopNavEntry || 'true' }
         });
         res.json(response.data);
     } catch (error) {
@@ -175,8 +314,8 @@ app.get('/api/v1/auto-suggest', async (req, res) => {
     try {
         const { lat, lng } = req.query;
         const response = await axios.get(`https://disc.swiggy.com/api/v1/auto-suggest/`, {
-            params: { lat, lng },
-            headers: getSwiggyHeaders(req.headers['deviceid'])
+            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
+            params: { lat, lng }
         });
         res.json(response.data);
     } catch (error) {
@@ -188,8 +327,8 @@ app.get('/api/v3/search', async (req, res) => {
     try {
         const { lat, lng, str } = req.query;
         const response = await axios.get(`https://disc.swiggy.com/api/v3/search/`, {
-            params: { lat, lng, str },
-            headers: getSwiggyHeaders(req.headers['deviceid'])
+            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
+            params: { lat, lng, str }
         });
         res.json(response.data);
     } catch (error) {
