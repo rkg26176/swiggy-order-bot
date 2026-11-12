@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { db } = require('./firebase'); // Firebase DB connection
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -33,15 +34,19 @@ const CHANNELS = {
 const SMS_OTP_URL = "https://profile.swiggy.com/api/v3/app/sms_otp";
 const VERIFY_URL = "https://profile.swiggy.com/api/v3/app/login/verify";
 
-// Temporary memory for sessions, user keys & live orders
-const PENDING_OTP = {};
-const USER_KEYS = {};
-let liveOrders = []; // असली ऑर्डर्स स्टोर करने के लिए
+// 3 Proxy List Rotation Setup
+const PROXIES = [
+    "http://ZAhaiMvE:Y39OCfsKR0@103.163.55.57:50101",
+    "http://Me01WF2K:OHVb4nh60D@103.163.55.125:50101",
+    "http://aRSVpM7F:VDheTt93j0@103.171.77.18:50101"
+];
 
-// Optional Proxy Configuration (आप चाहें तो अपनी प्रॉक्सी यहाँ सेट कर सकते हैं)
-// फॉर्मेट: http://username:password@ip:port
-const PROXY_URL = process.env.PROXY_URL || ""; 
-const agent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
+let proxyIndex = 0;
+function getProxyAgent() {
+    const proxyUrl = PROXIES[proxyIndex];
+    proxyIndex = (proxyIndex + 1) % PROXIES.length; // Rotate proxies automatically
+    return new HttpsProxyAgent(proxyUrl);
+}
 
 function newDeviceId() {
     return crypto.randomBytes(8).toString('hex');
@@ -78,23 +83,21 @@ const getSwiggyHeaders = (deviceId) => {
     };
 };
 
-// Helper: Axios config with optional Proxy
 const getAxiosConfig = (headers) => {
-    const config = { headers, timeout: 30000 };
-    if (agent) {
-        config.httpsAgent = agent;
-    }
-    return config;
+    return {
+        headers,
+        timeout: 30000,
+        httpsAgent: getProxyAgent() // Rotates through your 3 proxies
+    };
 };
 
-// Helper: Check which channels the user has NOT joined yet
+// Helper: Check unjoined channels
 async function getUnjoinedChannels(userId) {
     const unjoined = {};
     for (const [channelId, info] of Object.entries(CHANNELS)) {
         try {
             const member = await bot.getChatMember(channelId, userId);
-            const status = member.status;
-            if (['left', 'kicked', 'restricted'].includes(status)) {
+            if (['left', 'kicked', 'restricted'].includes(member.status)) {
                 unjoined[channelId] = info;
             }
         } catch (err) {
@@ -104,16 +107,47 @@ async function getUnjoinedChannels(userId) {
     return unjoined;
 }
 
-// Send Main Menu (When joined all channels)
-async function sendMainMenu(chatId, userId) {
-    if (!USER_KEYS[userId]) {
-        USER_KEYS[userId] = generateUserKey();
-    }
-    const userKey = USER_KEYS[userId];
-    const webAppUrl = `https://storelex.store/swiggy_web/?key=${userKey}`;
+// Get or Create User Data from Firebase DB
+async function getOrCreateUser(userId, username) {
+    const userRef = db.collection('users').doc(String(userId));
+    const doc = await userRef.get();
 
-    const welcomeMessage = `✨ **WELCOME TO GBX SWIGGY PRO ORDER BOT!**\n\n` +
-        `🚀 **YOU CAN USE WEB MINI FOR ORDERS.**\n\n` +
+    if (doc.exists) {
+        return doc.data();
+    } else {
+        const newUser = {
+            userId: userId,
+            username: username || 'User',
+            key: generateUserKey(),
+            balance: 0,
+            totalDeposit: 0,
+            accounts: [], // Bulk login sessions stored here
+            orders: [],
+            createdAt: new Date().toISOString()
+        };
+        await userRef.set(newUser);
+        return newUser;
+    }
+}
+
+// Send Main Menu
+async function sendMainMenu(chatId, userId, username) {
+    const userData = await getOrCreateUser(userId, username);
+    const userKey = userData.key;
+    const accountCount = userData.accounts ? userData.accounts.length : 0;
+    const totalOrdersCount = userData.orders ? userData.orders.length : 0;
+    const balance = userData.balance || 0;
+
+    // Your exact Railway Web App URL with key
+    const webAppUrl = `https://swiggy-order-bot-production.up.railway.app/?key=${userKey}`;
+
+    const welcomeMessage = `✨ **WELCOME TO SWIGGY GBX SWIGGY PRO ORDER BOT!** ✨\n\n` +
+        `🚀 **You can use mini web for orders.**\n\n` +
+        `📊 **STATS:**\n` +
+        `👤 **Linked Accounts:** \`${accountCount}\`\n` +
+        `📦 **Total Orders:** \`${totalOrdersCount}\`\n` +
+        `💰 **Total Balance:** \`₹${balance}\`\n` +
+        `🏷️ **Order Fee:** \`Free\`\n\n` +
         `🔑 **KEY : \`${userKey}\`**`;
 
     await bot.sendMessage(chatId, welcomeMessage, {
@@ -128,21 +162,19 @@ async function sendMainMenu(chatId, userId) {
                     { text: "🌐 OPEN GBX SWIGGY PRO", web_app: { url: webAppUrl } }
                 ],
                 [
-                    { text: "💬 SUPPORT", url: "https://t.me/gbx_support_bot" },
-                    { text: "📊 LIVE ORDERS", callback_data: "view_orders" }
+                    { text: "💰 WALLET", callback_data: "wallet_menu" },
+                    { text: "💬 SUPPORT", url: "https://t.me/gbx_support_bot" }
                 ]
             ]
         }
     });
 }
 
-// Send Force Subscribe Prompt
-async function sendForceSubPrompt(chatId, userId) {
+// Force Sub Prompt
+async function sendForceSubPrompt(chatId, userId, username) {
     const unjoined = await getUnjoinedChannels(userId);
-    const unjoinedKeys = Object.keys(unjoined);
-
-    if (unjoinedKeys.length === 0) {
-        await sendMainMenu(chatId, userId);
+    if (Object.keys(unjoined).length === 0) {
+        await sendMainMenu(chatId, userId, username);
         return;
     }
 
@@ -152,196 +184,127 @@ async function sendForceSubPrompt(chatId, userId) {
     }
     keyboard.push([{ text: "🔄 VERIFY JOIN", callback_data: "verify_join" }]);
 
-    const promptMsg = `⚠️ **Please join our update channels & group to use GBX Swiggy Pro Bot:**\n\n` +
-        `After joining all channels, click the **VERIFY JOIN** button below.`;
-
-    await bot.sendMessage(chatId, promptMsg, {
+    await bot.sendMessage(chatId, `⚠️ **Please join our channels to use the bot:**`, {
         parse_mode: "Markdown",
         reply_markup: { inline_keyboard: keyboard }
     });
 }
 
-// ==================== TELEGRAM BOT LISTENERS ====================
+// ==================== TELEGRAM LISTENERS ====================
 bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    await sendForceSubPrompt(chatId, userId);
+    await sendForceSubPrompt(msg.chat.id, msg.from.id, msg.from.username);
 });
 
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
     const data = query.data;
+    const userRef = db.collection('users').doc(String(userId));
+    const userDoc = await userRef.get();
+    const userData = userDoc.exists ? userDoc.data() : null;
 
     if (data === "verify_join") {
         const unjoined = await getUnjoinedChannels(userId);
         if (Object.keys(unjoined).length > 0) {
-            bot.answerCallbackQuery(query.id, { text: "❌ You have not joined all channels yet!", show_alert: true });
+            bot.answerCallbackQuery(query.id, { text: "❌ Please join all channels first!", show_alert: true });
         } else {
-            bot.answerCallbackQuery(query.id, { text: "✅ Verified successfully!" });
-            try {
-                await bot.deleteMessage(chatId, query.message.message_id);
-            } catch(e) {}
-            await sendMainMenu(chatId, userId);
+            bot.answerCallbackQuery(query.id, { text: "✅ Verified!" });
+            try { await bot.deleteMessage(chatId, query.message.message_id); } catch(e) {}
+            await sendMainMenu(chatId, userId, query.from.username);
         }
     } else if (data === "bulk_login") {
-        bot.answerCallbackQuery(query.id, { text: "Bulk Login active via Web App." });
-        bot.sendMessage(chatId, "📦 **Bulk Login:** Please open the Web App to manage multiple accounts securely.");
+        bot.sendMessage(chatId, "📦 **Bulk Login:** Send your Swiggy JSON session data here in a single message or bulk lines. It will be injected directly into your account.");
     } else if (data === "bulk_export") {
-        bot.answerCallbackQuery(query.id, { text: "Bulk Export ready." });
-        bot.sendMessage(chatId, "📥 **Bulk Export:** Export your session JSON directly from the accounts tab inside the Web App.");
-    } else if (data === "view_orders") {
-        bot.answerCallbackQuery(query.id, { text: "Fetching Live Orders..." });
-        bot.sendMessage(chatId, `📊 **Live Orders Count:** ${liveOrders.length} active in system.`);
+        if (!userData || !userData.accounts || userData.accounts.length === 0) {
+            bot.sendMessage(chatId, "📥 No accounts found to export.");
+        } else {
+            bot.sendMessage(chatId, `📥 **Your Accounts JSON Export:**\n\n\`\`\`json\n${JSON.stringify(userData.accounts, null, 2)}\n\`\`\``, { parse_mode: "Markdown" });
+        }
+    } else if (data === "wallet_menu") {
+        const balance = userData?.balance || 0;
+        const totalDeposit = userData?.totalDeposit || 0;
+        bot.sendMessage(chatId, `💳 **WALLET PANEL**\n\n💰 **Balance:** ₹${balance}\n📥 **Total Deposit:** ₹${totalDeposit}\n🏷️ **Order Fee:** Free\n\nClick Deposit to add funds.`, {
+            parse_mode: "Markdown",
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "➕ DEPOSIT", callback_data: "deposit_funds" }],
+                    [{ text: "🔙 BACK TO MENU", callback_data: "back_menu" }]
+                ]
+            }
+        });
+    } else if (data === "deposit_funds") {
+        bot.sendMessage(chatId, "💡 **Deposit:** Please enter minimum ₹15 to add to your wallet balance.");
+    } else if (data === "back_menu") {
+        try { await bot.deleteMessage(chatId, query.message.message_id); } catch(e) {}
+        await sendMainMenu(chatId, userId, query.from.username);
     }
 });
 
-// ==================== OTP SEND ROUTE ====================
+// Handle text messages for Bulk JSON Login injection
+bot.on('message', async (msg) => {
+    if (!msg.text || msg.text.startsWith('/')) return;
+    const userId = msg.from.id;
+    const text = msg.text.trim();
+
+    // Check if user is sending JSON for bulk login
+    if (text.startsWith('[') || text.startsWith('{')) {
+        try {
+            const parsedData = JSON.parse(text);
+            const userRef = db.collection('users').doc(String(userId));
+            const doc = await userRef.get();
+            
+            let accounts = doc.exists ? (doc.data().accounts || []) : [];
+            if (Array.isArray(parsedData)) {
+                accounts.push(...parsedData);
+            } else {
+                accounts.push(parsedData);
+            }
+
+            await userRef.update({ accounts });
+            bot.sendMessage(msg.chat.id, `✅ **Success!** Added accounts via Bulk Login. Total linked: ${accounts.length}`);
+        } catch (err) {
+            // Not a valid JSON, ignore or treat as normal text
+        }
+    }
+});
+
+// ==================== WEB API ENDPOINTS ====================
+
+// Verify Key & Fetch User Data for Mini Web
+app.get('/api/user-data', async (req, res) => {
+    try {
+        const { key } = req.query;
+        if (!key) return res.status(400).json({ error: "Key is required" });
+
+        const snapshot = await db.collection('users').where('key', '==', key).get();
+        if (snapshot.empty) {
+            return res.status(404).json({ error: "Invalid Key" });
+        }
+
+        const userData = snapshot.docs[0].data();
+        res.json({ success: true, user: userData });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// OTP Send API with Proxy Rotation
 app.post('/api/send_otp', async (req, res) => {
     try {
-        const bodyData = req.body || {};
-        const mobile = String(bodyData.mobile || "").trim().slice(-10);
-        
-        if (mobile.length !== 10) {
-            return res.status(400).json({ status: "error", message: "10-digit mobile number required" });
-        }
+        const { mobile } = req.body;
+        const cleanMobile = String(mobile || "").trim().slice(-10);
+        if (cleanMobile.length !== 10) return res.status(400).json({ error: "10-digit mobile required" });
 
         const deviceId = newDeviceId();
-        const response = await axios.get(`${SMS_OTP_URL}?mobile=${mobile}`, getAxiosConfig(getSwiggyHeaders(deviceId)));
-
-        const resData = response.data || {};
-        PENDING_OTP[mobile] = {
-            tid: resData.tid,
-            sid: resData.sid,
-            device_id: deviceId
-        };
-
-        return res.json({ status: "success", message: "OTP Sent successfully" });
-    } catch (error) {
-        console.error("Send OTP Error:", error.message);
-        return res.status(500).json({ status: "error", message: error.response?.data?.message || error.message });
-    }
-});
-
-// ==================== OTP VERIFY ROUTE ====================
-app.post('/api/verify_otp', async (req, res) => {
-    try {
-        const bodyData = req.body || {};
-        const mobile = String(bodyData.mobile || "").trim().slice(-10);
-        const otp = String(bodyData.otp || "").trim();
-
-        const st = PENDING_OTP[mobile];
-        if (!st) {
-            return res.status(400).json({ status: "error", message: "Session expired, please resend OTP" });
-        }
-
-        const h = {
-            ...getSwiggyHeaders(st.device_id),
-            "sid": st.sid,
-            "Tid": st.tid,
-            "Content-Type": "application/json; charset=utf-8"
-        };
-
-        const p = {
-            "cloningSignalsData": {
-                "appFilesDirPathInvalid": 0, "developerModeEnabled": 0,
-                "deviceModelVmos": 0, "emulatorStatus": 0,
-                "packageName": "in.swiggy.android", "workProfileEnabled": 0
-            },
-            "otp": otp
-        };
-
-        const response = await axios.post(`${VERIFY_URL}?otp_source=Sms-automatic`, p, getAxiosConfig(h));
-
-        return res.json({ status: "success", data: response.data });
-    } catch (error) {
-        console.error("Verify OTP Error:", error.message);
-        return res.status(500).json({ status: "error", message: error.response?.data?.message || error.message });
-    }
-});
-
-// ==================== ORDERS API (फिक्स किया गया) ====================
-app.get('/api/orders', (req, res) => {
-    res.json({
-        totalOrders: liveOrders.length,
-        activeSessions: Object.keys(USER_KEYS).length,
-        orders: liveOrders
-    });
-});
-
-app.post('/api/new-order', (req, res) => {
-    const { orderId, userId, items, amount } = req.body;
-    const newOrder = {
-        id: orderId || `SWG-${Date.now()}`,
-        userId: userId || 'Direct',
-        items: items || 'Custom Order',
-        amount: amount || 0,
-        status: 'Processing'
-    };
-    liveOrders.unshift(newOrder);
-    res.json({ success: true, order: newOrder });
-});
-
-// ==================== MAPS & DISCOVERY PROXIES ====================
-app.get('/address/recommend', async (req, res) => {
-    try {
-        const { latlng } = req.query;
-        if (!latlng) return res.status(400).json({ error: "latlng is required" });
-
-        const response = await axios.get(`https://maps.swiggy.com/address/recommend?latlng=${latlng}`, getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])));
-        res.json(response.data);
+        const response = await axios.get(`${SMS_OTP_URL}?mobile=${cleanMobile}`, getAxiosConfig(getSwiggyHeaders(deviceId)));
+        
+        res.json({ status: "success", data: response.data, deviceId });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
-});
-
-app.get('/api/v2/food', async (req, res) => {
-    try {
-        const { lat, lng, isTopNavEntry } = req.query;
-        if (!lat || !lng) return res.status(400).json({ error: "lat and lng are required" });
-
-        const response = await axios.get(`https://disc.swiggy.com/api/v2/food`, {
-            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
-            params: { lat, lng, isTopNavEntry: isTopNavEntry || 'true' }
-        });
-        res.json(response.data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/v1/auto-suggest', async (req, res) => {
-    try {
-        const { lat, lng } = req.query;
-        const response = await axios.get(`https://disc.swiggy.com/api/v1/auto-suggest/`, {
-            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
-            params: { lat, lng }
-        });
-        res.json(response.data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/v3/search', async (req, res) => {
-    try {
-        const { lat, lng, str } = req.query;
-        const response = await axios.get(`https://disc.swiggy.com/api/v3/search/`, {
-            ...getAxiosConfig(getSwiggyHeaders(req.headers['deviceid'])),
-            params: { lat, lng, str }
-        });
-        res.json(response.data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// SPA Fallback
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Start Server
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`GBX Swiggy Bot Server running on port ${PORT}`);
 });
