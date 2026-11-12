@@ -87,7 +87,7 @@ const getAxiosConfig = (headers) => {
     return {
         headers,
         timeout: 30000,
-        httpsAgent: getProxyAgent() // Rotates through your 3 proxies
+        httpsAgent: getProxyAgent()
     };
 };
 
@@ -121,7 +121,7 @@ async function getOrCreateUser(userId, username) {
             key: generateUserKey(),
             balance: 0,
             totalDeposit: 0,
-            accounts: [], // Bulk login sessions stored here
+            accounts: [],
             orders: [],
             createdAt: new Date().toISOString()
         };
@@ -138,7 +138,6 @@ async function sendMainMenu(chatId, userId, username) {
     const totalOrdersCount = userData.orders ? userData.orders.length : 0;
     const balance = userData.balance || 0;
 
-    // Your exact Railway Web App URL with key
     const webAppUrl = `https://swiggy-order-bot-production.up.railway.app/?key=${userKey}`;
 
     const welcomeMessage = `✨ **WELCOME TO SWIGGY GBX SWIGGY PRO ORDER BOT!** ✨\n\n` +
@@ -192,6 +191,8 @@ async function sendForceSubPrompt(chatId, userId, username) {
 
 // ==================== TELEGRAM LISTENERS ====================
 bot.onText(/\/start/, async (msg) => {
+    // ग्रुप चैट में /start इग्नोर करने के लिए चेक
+    if (['group', 'supergroup'].includes(msg.chat.type)) return;
     await sendForceSubPrompt(msg.chat.id, msg.from.id, msg.from.username);
 });
 
@@ -240,13 +241,15 @@ bot.on('callback_query', async (query) => {
     }
 });
 
-// Handle text messages for Bulk JSON Login injection
+// Handle text messages for Bulk JSON Login injection (Only in Private Chat)
 bot.on('message', async (msg) => {
+    // ग्रुप चैट या सुपरग्रुप के मैसेज को पूरी तरह इग्नोर करें
+    if (['group', 'supergroup'].includes(msg.chat.type)) return;
     if (!msg.text || msg.text.startsWith('/')) return;
+
     const userId = msg.from.id;
     const text = msg.text.trim();
 
-    // Check if user is sending JSON for bulk login
     if (text.startsWith('[') || text.startsWith('{')) {
         try {
             const parsedData = JSON.parse(text);
@@ -263,14 +266,13 @@ bot.on('message', async (msg) => {
             await userRef.update({ accounts });
             bot.sendMessage(msg.chat.id, `✅ **Success!** Added accounts via Bulk Login. Total linked: ${accounts.length}`);
         } catch (err) {
-            // Not a valid JSON, ignore or treat as normal text
+            // Invalid JSON ignored
         }
     }
 });
 
 // ==================== WEB API ENDPOINTS ====================
 
-// Verify Key & Fetch User Data for Mini Web
 app.get('/api/user-data', async (req, res) => {
     try {
         const { key } = req.query;
@@ -288,7 +290,6 @@ app.get('/api/user-data', async (req, res) => {
     }
 });
 
-// OTP Send API with Proxy Rotation
 app.post('/api/send_otp', async (req, res) => {
     try {
         const { mobile } = req.body;
@@ -302,6 +303,11 @@ app.post('/api/send_otp', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+});
+
+// SPA Fallback Route
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Start Server
