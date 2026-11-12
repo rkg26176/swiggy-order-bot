@@ -191,7 +191,6 @@ async function sendForceSubPrompt(chatId, userId, username) {
 
 // ==================== TELEGRAM LISTENERS ====================
 bot.onText(/\/start/, async (msg) => {
-    // ग्रुप चैट में /start इग्नोर करने के लिए चेक
     if (['group', 'supergroup'].includes(msg.chat.type)) return;
     await sendForceSubPrompt(msg.chat.id, msg.from.id, msg.from.username);
 });
@@ -241,9 +240,7 @@ bot.on('callback_query', async (query) => {
     }
 });
 
-// Handle text messages for Bulk JSON Login injection (Only in Private Chat)
 bot.on('message', async (msg) => {
-    // ग्रुप चैट या सुपरग्रुप के मैसेज को पूरी तरह इग्नोर करें
     if (['group', 'supergroup'].includes(msg.chat.type)) return;
     if (!msg.text || msg.text.startsWith('/')) return;
 
@@ -310,7 +307,8 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Start Server
-app.listen(PORT, () => {
+// Start Server for Railway (Fixed Host Binding)
+const HOST = '0.0.0.0';
+app.listen(PORT, HOST, () => {
     console.log(`GBX Swiggy Bot Server running on port ${PORT}`);
 });
